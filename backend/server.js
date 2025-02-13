@@ -229,7 +229,7 @@ const detectDatabase = (repoPath) => {
 
     const frontendDockerfile = (repoPath, frontendTech) => {
         //initialize an empty string to store the dockerfile content
-        const dockerfile = '';
+        let dockerfile = '';
 
         //check if the frontend tech ids react (or vite),vue or angulair
         if (frontendTech === 'react-vite' || frontendTech === 'react' || frontendTech === 'vue') {
@@ -267,7 +267,234 @@ const detectDatabase = (repoPath) => {
         fs.writeFileSync(path.join(repoPath, 'frontend', 'Dockerfile'), dockerfile);
     };
 
-    
+    const backendDockerfile = (repoPath, backendTech) => {
+        //initialize an empty string to store the Dockerfile content
+        let dockerfile = '';
+
+        if(backendTech === 'node.js'){
+            dockerfile = `
+            #Dockerfile for node.js app
+            FROM node:18
+            
+            #set the working dir
+            WORKDIR /app
+            
+            #copy package.json and install dependencies
+            COPY backed/package.json backend/
+            RUN cd backend && npm install
+            
+            #copy the entire backend source code
+            COPY backend/ backend/
+            
+            #expore the port (default to 5000)
+            ARG PORT=5000
+            ENV PORT=$PORT
+            EXPOSE $PORT
+            
+            #start the node.js server 
+            CMD ["node", "backend/server.js"]
+            `;
+        } else if (backendTech === 'python'){
+            dockerfile =`
+            # dockerfile for python app
+            FROM python:3.10
+            
+            #set the working directory
+            WORKDIR /app
+            
+            #copy and install dependencies
+            COPY backend/requirements.txt backend/
+            RUN pip install -r backend/requirements.txt
+            
+            #copy the entire backend source code
+            COPY backend/ backend/
+            
+            #expose the port (default to 5000)
+            ARG PORT=5000
+            ENV PORT=$PORT
+            EXPOSE $PORT
+            
+            #start the python app 
+            CMD ["python", "backend/app.py"]
+            `;
+        } else if (backendTech === 'php-laravel'){
+            dockerfile = `
+            #Dockerfile for laravel (php) app
+            FROM php:8.1-fpm
+            
+            #set the woking dir
+            WORKDIR /app
+            
+            #copy laravel dependencies and install them
+            COPY backend/composer.json backend/composer.lock backend/
+            RUN cd backend && composer install --no-dev --optimize-autoloader
+            
+            #copy the entire backend source code 
+            COPY backend/ backend/
+            
+            #expose the port (default to 8000 for laravel)
+            ARG PORT=8000
+            ENV PORT=$PORT
+            EXPOSE $PORT
+            
+            #start laravel server
+            CMD ["php", "backend/artisan", "serve", "--host=0.0.0.0", "--port=$PORT]
+            `;
+        }
+        //write the generated Dockerfile content into the backend dir
+        fs.writeFileSync(path.join(repoPath, 'backend', 'Dockerfile'), dockerfile);
+    };
+
+    const databaseDockerfile = (repoPath, backendPort) => {
+        const database = detectDatabase(repoPath);
+
+        let databaseService = '';
+        if (database === 'mysql'){
+            databaseService = `
+            db: 
+                image: mysql:latest
+                restart: always
+                environment:
+                    MYSQL_ROOT_PASSWARD: root
+                    MYSQL_DATABASE: app_db
+                ports:
+                    - "3306:3306"
+                `;
+        } else if (database === 'postgres') {
+            databaseService = `
+            db:
+                image: postgres:latest
+                restart: always
+                enviroment:
+                    POSTGRES_USER: user
+                    POSTGRES_PASSWORD: password 
+                    POSTGRES_DB: app_db
+                ports:
+                    - "5432:54323
+            `;
+        }else if (database === 'mongodb'){
+            databaseService = `
+            db:
+                image : redis:latest
+                restart: always
+                ports:
+                    - "6379:6379"
+        `;
+        }
+
+        const dockerComposeContent = `
+           version: '3'
+           services:
+            frontend:
+                build:
+                    context: ./frontend
+                    dockerfile: Dockerfile
+                ports:
+                    - "80:80"
+                networks:
+                    - app-network
+                backend:
+                    build:
+                        context: ./backend
+                        dockerfile: Dockerfile
+                    ports:
+                        - "${backendPort}:${backendPort}"
+                    depends_on:
+                        - db
+                    networks:
+                        - app-network
+                    ${databaseService}
+                networks:
+                    app-network
+                        driver:bridge
+             `;
+        fs.writeFileSync(path.join(repoPath, 'docker-compose.yml'), dockerComposeContent);
+    };
+
+    //fct to create a dockerignore file
+    const Dockerignore = (repoPath) => {
+        const dockerignoreContent = `
+        #ignore dependencies and build artifacts
+        node_modules
+        logs
+        *.log
+        .env
+        
+        #ignore front and backend build outputs
+        /build
+        /dist
+        /.next
+        /out
+        /.cache
+        
+        #ignore IDE/editor-specific files
+        .vscode/
+        .idea/
+        .DS_Store
+        Thumbs.db
+        
+        #ignore git-related files
+        .git
+        .gitignore
+        
+        #ingnore python-related files
+        __pycache__/
+        *.pyc
+        *.pyo
+        *.pyd
+        venv/
+        
+        #ignore php vendor directory
+        vendor/
+        `;
+        //write the .dockerignore file in the repo root
+        fs.writeFileSync(path.join(repoPath, '.dockerignore'), dockerignoreContent);
+    };
+
+    //fct to create a docker-compose.yml file
+    const createDockerComposerFile = (repoPath, port) => {
+        const dockerCompose = `
+       #define the Docher compose version
+        version: '3.8' 
+        
+        services:
+        #frontend service
+        frontend:
+            build:
+                #set the frontend build context
+                context: ./frontend 
+                #use the frontend dockerfile
+                dockerfile: DOckerfile
+            ports:
+                #map container port 80 to host 80
+                - "80:80"
+            network:
+                #connect frontend to the shared network
+                - app-network
+                
+            #backend service
+            backend:
+                build:
+                    #set the backend build context
+                    context: ./backend
+                    #use the backend Dockerfile
+                    dockerfile: Dockerfile
+                ports:
+                    #map backend port dynamicallybased on detected port
+                    - "${port}:${port}"
+                networks:
+                    #connect backend to the shared network
+                    - app-network
+                    
+                    #define a network for the services to communicate
+                    networks:
+                        app-network:
+                            driver: bridge
+                             `;
+        // write the docker-compose.yml file in the repo root
+        fs.writeFileSync(path.join(repoPath, 'docker-compose.yml'), dockerCompose);
+    };
+
 
 // API endpoint to clone a GitHub repo
 app.post('/api/clone', async (req, res) => {
@@ -304,7 +531,7 @@ app.post('/api/clone', async (req, res) => {
 
         } else {
             // If it's not a full-stack app, delete it
-            deleteRepo(CLONE_DIR);
+            deleteRepo(repoDir);
             res.status(400).json({ success: false, message: 'This is not a full-stack app, repository deleted.' });
         }
 
