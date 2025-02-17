@@ -68,11 +68,23 @@ const detectFrontendTechnology = (repoPath) => {
 
 // Detect backend technology
 const detectBackendTechnology = (repoPath) => {
-    const files = fs.readdirSync(repoPath);
-    //check if the backend folder has a package.json (nodejsproject)
-    if (fs.existsSync(path.join(repoPath, 'backend', 'package.json'))) return 'nodejs';
-
-  return 'unknown';
+    const backendPath = path.join(repoPath, 'backend');
+    const reqFilePath = path.join(backendPath, 'requirements.txt');
+  
+    //Node.js Detection
+    if (fs.existsSync(path.join(backendPath, 'package.json'))) return 'nodejs';
+  
+    //Python Backend Detection
+    if (fs.existsSync(reqFilePath)) {
+  
+      let buffer = fs.readFileSync(reqFilePath);
+      let requirements = buffer.toString('utf16le'); // Convert from UTF-16 to string
+      requirements = requirements.replace(/\r/g, '').trim().toLowerCase(); // Normalize line endings
+  
+      if (requirements.includes('flask')) return 'python-flask';
+    }
+  
+    return 'unknown';
 };
 const detectNodeEntryFile = (repoPath) => {
    try{
@@ -102,59 +114,65 @@ const detectPython = (repoPath) => {
     //if no clear entry file is found, return null
     return null;
 };
+
 const backendPort = (repoPath, technology) => {
-    //first check for the existing of '.env' file for port config
+    // Check for the existence of '.env' file for port config
     const envFilePath = path.join(repoPath, 'backend', '.env');
-    if (fs.existsSync(envFilePath)){
+    if (fs.existsSync(envFilePath)) {
         const envContent = fs.readFileSync(envFilePath, 'utf-8');
-        //look for port variable in the '.env' file
+        // Look for port variable in the '.env' file
         const matchPort = envContent.match(/\w*PORT\s*=\s*(\d+)/);
-        if(matchPort) 
-            return parseInt(matchPort[1], 10); //return port number if found
+        if (matchPort) {
+            return parseInt(matchPort[1], 10); // Return port number if found
+        }
     }
 
-    //default port for diff tech
+    // Default ports for different technologies
     const defaultPorts = {
         nodejs: 5000,
         python: 8000,
         php: 8080,
     };
-        return defaultPorts[technology] || 3000;
 
-    // if no '.env' file is found, check for port deff in known backend files
-    const portPAtterns = {
-        // Node.js typically uses app.listen(PORT)
-        'nodejs': /listen\s*\(\s*(\d+)/, 
-        // Python Flask apps typically use app.run(port=PORT) 
-        'python': /run\(\s*host=.*?,\s*port\s*=\s*(\d+)/, 
-        // PHP Laravel config usually specifies port in 'app.php'
-        'php': /'port'\s*=>\s*(\d+)/,     
+    // Return default port for the technology if not found in '.env'
+    if (defaultPorts[technology]) {
+        return defaultPorts[technology];
+    }
+
+    // If no '.env' file is found, check for port definition in known backend files
+    const portPatterns = {
+        nodejs: /listen\s*\(\s*(\d+)/,
+        python: /run\(\s*host=.*?,\s*port\s*=\s*(\d+)/,
+        php: /'port'\s*=>\s*(\d+)/,
     };
 
     const filesToCheck = {
-        'nodejs' : detectNodeEntryFile(repoPath),
-        'python' : detectPython(repoPath),
-        'php' : ['config/app.php'], //laravel config file for php
+        nodejs: detectNodeEntryFile(repoPath),
+        python: detectPython(repoPath),
+        php: ['config/app.php'], // Laravel config file for PHP
     };
-    if(!filesToCheck[technology]) 
-        return 'invalid technology';
 
-    //for the given technology, check the corresponding entry files
-    for(const file of filesToCheck[technology]){
+    if (!filesToCheck[technology]) {
+        return 'Invalid technology';
+    }
+
+    // For the given technology, check the corresponding entry files
+    for (const file of filesToCheck[technology]) {
         const filePath = path.join(repoPath, 'backend', file);
         if (fs.existsSync(filePath)) {
             const content = fs.readFileSync(filePath, 'utf-8');
-            //check for port pattern in the file
-            const match = content.match(portPAtterns[technology]);
-            //return port number if matched
-            if(match) 
-                return parseInt(match[1], 10);
+            // Check for port pattern in the file
+            const match = content.match(portPatterns[technology]);
+            if (match) {
+                return parseInt(match[1], 10); // Return port number if matched
+            }
         }
     }
-    //if no port found
-    return 'no port found';
-    
+
+    // If no port is found
+    return 'No port found';
 };
+
 
 //fnt to detect the database
 const detectDatabase = (repoPath) => {
@@ -251,7 +269,7 @@ const detectDatabase = (repoPath) => {
     }
     //no database detected
     return 'unknown';
-};
+}; 
 
     const frontendDockerfile = (repoPath, frontendTech) => {
         //initialize an empty string to store the dockerfile content
@@ -296,7 +314,7 @@ const detectDatabase = (repoPath) => {
             COPY package.json ./
             RUN npm install
             COPY . ./
-            RUN npm run build -- --prod
+            RUN npm run build
     
             FROM nginx:alpine
             COPY --from=build /app/dist /usr/share/nginx/html
@@ -466,7 +484,7 @@ const detectDatabase = (repoPath) => {
                     - "80:80"
                 networks:
                     - app-network
-                backend:
+            backend:
                     build:
                         context: ./backend
                         dockerfile: Dockerfile
@@ -482,8 +500,8 @@ const detectDatabase = (repoPath) => {
                         driver:bridge
              `;
         fs.writeFileSync(path.join(repoPath, 'docker-compose.yml'), dockerComposeContent);
-    };
-
+    ;
+    }
     //fct to create a dockerignore file
     const Dockerignore = (repoPath) => {
         const dockerignoreContent = `
@@ -528,7 +546,6 @@ const detectDatabase = (repoPath) => {
     const createDockerComposerFile = (repoPath, port) => {
         const dockerCompose = `
        #define the Docher compose version
-        version: '3.8' 
         
         services:
         #frontend service
@@ -537,7 +554,7 @@ const detectDatabase = (repoPath) => {
                 #set the frontend build context
                 context: ./frontend 
                 #use the frontend dockerfile
-                dockerfile: DOckerfile
+                dockerfile: Dockerfile
             ports:
                 #map container port 80 to host 80
                 - "80:80"
@@ -599,7 +616,7 @@ app.post('/api/clone', async (req, res) => {
         if (isFullStackApp(repoDir)) {
             const frontendTech = detectFrontendTechnology(repoDir);
             const backendTech = detectBackendTechnology(repoDir);
-            const databaseTech = detectDatabaseTechnology(repoDir);
+            const databaseTech = detectDatabase(repoDir);
 
             // If it's a full-stack app, return detected technologies
             return res.json({
