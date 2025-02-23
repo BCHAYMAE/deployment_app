@@ -1,0 +1,187 @@
+/* General Styles */
+body {
+  font-family: Arial, sans-serif;
+  background-color: #27445D;
+  margin: 0;
+  padding: 0;
+}
+
+/* Navbar */
+.navbar {
+  background-color: #1f2937;
+  color: #fff;
+  padding: 1rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  position: fixed; /* Make navbar fixed */
+  top: 0; /* Align it to the top */
+  left: 0;
+  right: 0;
+  z-index: 10; /* Ensure navbar is on top of other content */
+}
+
+.navbar nav {
+  font-size: 1.5rem;
+  font-weight: bold;
+}
+
+.navbar-links a {
+  color: #9ca3af;
+  margin-left: 1.5rem;
+  text-decoration: none;
+  transition: color 0.3s ease;
+}
+
+.navbar-links a:hover {
+  color: #fff;
+}
+
+/* Deploy Form Container */
+.deploy-form-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 80vh;
+  margin-top: 80px; /* Push content below fixed navbar */
+}
+
+/* Deploy Form Card */
+.deploy-form-card {
+  background-color: #fff;
+  padding: 2rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  width: 400px;
+  text-align: center;
+}
+
+.deploy-form-title {
+  font-size: 1.75rem;
+  margin-bottom: 1.5rem;
+  color: #1f2937;
+}
+
+/* Form Group */
+.form-group {
+  margin-bottom: 1.5rem;
+  text-align: left;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: bold;
+  color: #374151;
+}
+
+.form-input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 1rem;
+  outline: none;
+  transition: border-color 0.3s ease;
+}
+
+.form-input:focus {
+  border-color: #3b82f6;
+}
+
+/* Clone Button */
+.clone-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.75rem;
+  background-color: #3b82f6;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.clone-button:disabled {
+  background-color: #93c5fd;
+  cursor: not-allowed;
+}
+
+.clone-button:hover:not(:disabled) {
+  background-color: #2563eb;
+}
+
+.button-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* Loader */
+.loader {
+  border: 3px solid #f3f3f3;
+  border-top: 3px solid #3b82f6;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Alerts */
+.alert {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  font-weight: bold;
+}
+
+.alert.success {
+  background-color: #d1fae5;
+  color: #065f46;
+}
+
+.alert.error {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+.alert.loading {
+  background-color: #e0f2fe;
+  color: #0369a1;
+}
+
+/* Background Container */
+.background-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  z-index: -1;
+}
+
+/* Floating Icon */
+.floating-icon {
+  position: absolute;
+  color: rgba(0, 0, 0, 0.1);
+  animation: float 15s linear infinite;
+}
+
+@keyframes float {
+  from {
+    transform: translateY(100vh) rotate(0deg);
+  }
+  to {
+    transform: translateY(-100vh) rotate(360deg);
+  }
+}

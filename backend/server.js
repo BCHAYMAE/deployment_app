@@ -558,12 +558,12 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
             MYSQL_ROOT_PASSWORD: root
             MYSQL_DATABASE: mydb
           ports:
-            - "3307:3307"
+            - "3307:3306"
           volumes:
             - db-data:/var/lib/mysql
             - ./database/init:/docker-entrypoint-initdb.d
           healthcheck:
-            test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+            test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1",  "-uroot", "-proot"]
             interval: 10s
             retries: 5
             start_period: 30s
