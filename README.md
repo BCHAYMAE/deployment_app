@@ -17,7 +17,6 @@ This application automates the process of cloning a repository, detecting its te
 - ⚛️ React
 - ⚡ React with Vite
 - 🖼️ Vue
-- 📐 Angular
 
 ### Backend
 - 🟢 Node.js
@@ -27,7 +26,6 @@ This application automates the process of cloning a repository, detecting its te
 - 🐬 MySQL
 - 🐘 PostgreSQL
 - 🍃 MongoDB
-- 🔴 Redis
 - 🗄️ SQLite
 
 ## 📦 Prerequisites
