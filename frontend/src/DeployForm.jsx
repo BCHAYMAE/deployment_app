@@ -23,6 +23,7 @@ function DeployForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState("idle");
   const [statusMessage, setStatusMessage] = useState("");
+  const [deployedUrl, setDeployedUrl] = useState("");
 
   const handleClone = async () => {
     if (repoUrl) {
@@ -38,6 +39,7 @@ function DeployForm() {
         if (response.ok) {
           setStatus("success");
           setStatusMessage("Repository cloned successfully");
+          setDeployedUrl("http://localhost:8080"); // Set the deployed URL
         } else {
           const errorText = await response.text();
           setStatus("error");
@@ -77,8 +79,8 @@ function DeployForm() {
       <div className="navbar">
         <nav>Github AutoDeployment App</nav>
         <div className="navbar-links">
-          <a href="#source-code">Source Code</a>
-          <a href="#operating-process">Operating Process</a>
+          <a href="https://github.com/BCHAYMAE/deployment_app/tree/main">Source Code</a>
+          <a href="https://github.com/BCHAYMAE/deployment_app/blob/main/README.md">Operating Process</a>
         </div>
       </div>
 
@@ -118,6 +120,13 @@ function DeployForm() {
           </button>
           {status !== "idle" && (
             <div className={`alert ${status}`}>{statusMessage}</div>
+          )}
+          {status === "success" && (
+            <div className="success-link">
+              <a href={deployedUrl} target="_blank" rel="noopener noreferrer">
+                Go to Deployed Application
+              </a>
+            </div>
           )}
         </div>
       </div>

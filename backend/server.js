@@ -117,6 +117,8 @@ const detectDatabase = (repoPath, backendTech) => {
     path.join(repoPath, '.env'),
   ];
 
+  const configFilePath = path.join(repoPath, 'backend', 'config.py');
+
   switch (backendTech) {
     case 'nodejs': {
       let packageJson = null;
@@ -177,9 +179,41 @@ const detectDatabase = (repoPath, backendTech) => {
             console.log('MongoDB detected in requirements.txt');
             return 'mongodb';
           }
+          if (requirements.includes('sqlite')) {
+            console.log('SQLite detected in requirements.txt');
+            return 'sqlite';
+          }
         } catch (error) {
           console.warn(`Error reading requirements.txt: ${error.message}`);
         }
+      } else {
+        console.log(`requirements.txt not found at ${requirementsPath}`);
+      }
+
+      if (fs.existsSync(configFilePath)) {
+        try {
+          const configContent = fs.readFileSync(configFilePath, 'utf-8');
+          if (configContent.includes('mysql')) {
+            console.log('MySQL detected in config.py');
+            return 'mysql';
+          }
+          if (configContent.includes('postgresql')) {
+            console.log('Postgres detected in config.py');
+            return 'postgres';
+          }
+          if (configContent.includes('mongodb')) {
+            console.log('MongoDB detected in config.py');
+            return 'mongodb';
+          }
+          if (configContent.includes('sqlite')) {
+            console.log('SQLite detected in config.py');
+            return 'sqlite';
+          }
+        } catch (error) {
+          console.warn(`Error reading config.py: ${error.message}`);
+        }
+      } else {
+        console.log(`config.py not found at ${configFilePath}`);
       }
       break;
     }
@@ -211,6 +245,12 @@ const detectDatabase = (repoPath, backendTech) => {
         console.log('Redis detected in .env');
         return 'redis';
       }
+      if (envContent.includes('DB_CONNECTION=sqlite')) {
+        console.log('SQLite detected in .env');
+        return 'sqlite';
+      }
+    } else {
+      console.log(`.env file not found at ${envPath}`);
     }
   }
 
@@ -314,6 +354,14 @@ const createDatabaseDockerfile = (repoPath, databaseType) => {
       dockerfile = `
         FROM redis:latest
         EXPOSE 6379
+      `;
+      break;
+
+    case 'sqlite':
+      dockerfile = `
+        FROM nouchka/sqlite3
+        VOLUME /data
+        EXPOSE 8082
       `;
       break;
 
@@ -596,6 +644,29 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
             - ./database/init:/docker-entrypoint-initdb.d
       `;
       break;
+    case "python-flask-sqlite":
+      backendService = `
+        backend:
+          build:
+            context: ./backend
+            dockerfile: Dockerfile
+          ports:
+            - "4002:4002"
+          command: ["gunicorn", "-b", ":4002", "app:app"]
+          environment:
+            - PORT=4002
+      `;
+      databaseService = `
+        db:
+          build:
+            context: ./database
+            dockerfile: Dockerfile
+          ports:
+            - "8082:8082"
+          volumes:
+            - db-data:/data
+      `;
+      break;
     default:
       throw new Error("Can't create backend or database services");
   }
@@ -736,7 +807,7 @@ app.post('/api/clone-repo', (req, res) => {
           throw new Error("Deployment Failed: Nginx did not become ready within the expected time.");
       }
       console.log('Ready to go');
-      res.status(200).send('Deployment successful');
+      res.status(200).send({ message: 'Deployment successful', url: 'http://localhost:8080' });
       
   }catch(error) {
       console.error(`Error: ${error.message}`);

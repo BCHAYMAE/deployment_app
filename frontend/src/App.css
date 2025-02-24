@@ -159,6 +159,22 @@ body {
   color: #0369a1;
 }
 
+/* Success Link */
+.success-link {
+  margin-top: 1rem;
+}
+
+.success-link a {
+  color: #3b82f6;
+  text-decoration: none;
+  font-weight: bold;
+  transition: color 0.3s ease;
+}
+
+.success-link a:hover {
+  color: #2563eb;
+}
+
 /* Background Container */
 .background-container {
   position: fixed;
