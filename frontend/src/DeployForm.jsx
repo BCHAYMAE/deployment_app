@@ -1,135 +1,180 @@
-"use client";
+import React, { useState, useEffect, useRef } from 'react';
+import { io } from 'socket.io-client';
+import { GitBranch, Github } from 'lucide-react'; // Import the Github icon from lucide-react
+import './App.css';
 
-import { useState, useEffect } from "react";
-import { GitBranch, Github } from "lucide-react";
-import "./App.css";
+const socket = io('http://localhost:5001', {
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,
+});
 
-// Create a new component for the floating GitHub icon
-const FloatingGithubIcon = ({ size, top, left, delay }) => (
-  <div
-    className="floating-icon"
-    style={{
-      top: `${top}%`,
-      left: `${left}%`,
-      animationDelay: `${delay}s`,
-    }}
-  >
-    <Github size={size} />
-  </div>
-);
+function FloatingGithubIcon({ size, top, left, direction }) {
+  return (
+    <div
+      className={`floating-icon ${direction}`}
+      style={{
+        width: `${size}px`,
+        top: `${top}%`,
+        left: `${left}%`,
+      }}
+    >
+      <Github size={size} color="grey" />
+    </div>
+  );
+}
 
 function DeployForm() {
-  const [repoUrl, setRepoUrl] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [status, setStatus] = useState("idle");
-  const [statusMessage, setStatusMessage] = useState("");
-  const [deployedUrl, setDeployedUrl] = useState("");
+  const [repoUrl, setRepoUrl] = useState('');
+  const [disableInput, setDisableInput] = useState(false);
+  const [wsMessages, setWsMessages] = useState([]);
+  const [showTerminal, setShowTerminal] = useState(false);
+  const terminalRef = useRef(null);
+  const [floatingIcons, setFloatingIcons] = useState([]);
+  const platforms = ["GitHub", "GitLab", "Bitbucket"];
+  const [index, setIndex] = useState(0);
+  const [fade, setFade] = useState(true);
+
+  useEffect(() => {
+    socket.on('status', (message) => {
+      if (message.includes('Deploying')) {
+        let tempMessages = [...wsMessages];
+        tempMessages[tempMessages.length - 1] = message;
+      } else {
+        setWsMessages((prevMessages) => [...prevMessages, message]);
+        setShowTerminal(true);
+      }
+    });
+
+    return () => {
+      socket.off('status');
+    };
+  }, [wsMessages]);
+
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [wsMessages]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setFade(false);
+
+      setTimeout(() => {
+        setIndex((prev) => (prev + 1) % platforms.length);
+        setFade(true); 
+      }, 500);
+
+    }, 4000); 
+
+    return () => clearInterval(interval); // Clean up interval
+  }, []);
+
+  // UseEffect to Generation Floating Icons
+  useEffect(() => {
+    const generateFloatingIcons = () => {
+      const icons = [];
+      const directions = ['from-top', 'from-bottom', 'from-left', 'from-right'];
+      for (let i = 0; i < 50; i++) { // 50 floating icons
+        const size = Math.random() * 30 + 11; 
+        const top = Math.random() * 100; // Random top position
+        const left = Math.random() * 100; // Random left position
+        const direction = directions[Math.floor(Math.random() * directions.length)]; // Random direction
+        icons.push(<FloatingGithubIcon key={i} size={size} top={top} left={left} direction={direction} />);
+      }
+      return icons;
+    };
+  
+    setFloatingIcons(generateFloatingIcons());
+  }, []);
 
   const handleClone = async () => {
     if (repoUrl) {
-      setIsLoading(true);
-      setStatus("loading");
-      setStatusMessage("Cloning repository...");
+      setDisableInput(true);
+      setWsMessages([]);
+      setShowTerminal(true);
       try {
-        const response = await fetch("http://localhost:5001/api/clone-repo", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+        await fetch('http://localhost:5001/api/clone-repo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ repoUrl }),
         });
-        if (response.ok) {
-          setStatus("success");
-          setStatusMessage("Repository cloned successfully");
-          setDeployedUrl("http://localhost:8080"); // Set the deployed URL
-        } else {
-          const errorText = await response.text();
-          setStatus("error");
-          setStatusMessage(`Error: ${errorText}`);
-        }
       } catch (error) {
-        console.log("Error cloning repo:", error);
-        setStatus("error");
-        setStatusMessage("Error cloning repository");
-      } finally {
-        setIsLoading(false);
+        console.log('Error cloning repo:', error);
+        setWsMessages((prev) => [...prev, '🚨 Server Problem.. Try Again']);
+        setDisableInput(false);
       }
     }
   };
 
-  // Generate multiple floating icons
-  const generateFloatingIcons = () => {
-    const icons = [];
-    for (let i = 0; i < 50; i++) {
-      const size = Math.random() * 40 + 20; // Random size between 20 and 60
-      const top = Math.random() * 100; // Random top position
-      const left = Math.random() * 100; // Random left position
-      const delay = Math.random() * 10; // Random delay between 0 and 10 seconds
-      icons.push(<FloatingGithubIcon key={i} size={size} top={top} left={left} delay={delay} />);
+  const getMessageClass = (msg) => {
+    if (msg.includes('🚨')) {
+      return 'error-message';
+    } else if (msg.includes('<a')) {
+      return 'link-message';
+    } else {
+      return '';
     }
-    return icons;
   };
 
-  return (
-    <div className="deploy-form-container">
-      {/* Background with floating GitHub icons */}
-      <div className="background-container">
-        {generateFloatingIcons()}
-      </div>
 
-      {/* Main content */}
-      <div className="navbar">
-        <nav>Github AutoDeployment App</nav>
-        <div className="navbar-links">
-          <a href="https://github.com/BCHAYMAE/deployment_app/tree/main">Source Code</a>
-          <a href="https://github.com/BCHAYMAE/deployment_app/blob/main/README.md">Operating Process</a>
+
+  return (
+    <div className='container'>
+      {floatingIcons}
+      <div className='navbar'>
+        <a href="/" className="home-link">GitRepo AutoDeploy App</a>
+        <div>
+          <a href="https://github.com/drawliin/web-based-auto-deploy-system.git" target='_blank'>Source Code</a>
+          <a href="https://github.com/drawliin/web-based-auto-deploy-system/blob/main/README.md" target='_blank'>How It works?</a>
+          
         </div>
       </div>
 
-      <div className="deploy-form-card">
-        <h1 className="deploy-form-title">Clone a GitHub Repository</h1>
-        <div className="deploy-form-content">
-          <div className="form-group">
-            <label htmlFor="repo-url" className="form-label">
-              Repository URL
-            </label>
+      <div className="app-container">
+        <div className={`input-container ${showTerminal ? 'moved-up' : ''}`}>
+          <h1 className="title">
+            <img src='https://upload.wikimedia.org/wikipedia/commons/9/91/Octicons-mark-github.svg' alt='GitHub Logo' /> 
+            Clone a 
+            <span className={`platform-name transition-opacity duration-500 ${fade ? "opacity-100" : "opacity-0"}`}>
+              {platforms[index]}
+            </span> Repo
+          </h1>
+
+          <div className="input-box">
             <input
-              id="repo-url"
               type="text"
-              placeholder="https://github.com/username/repo"
+              placeholder="Enter Git Repo URL"
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
-              disabled={isLoading}
-              className="form-input"
+              disabled={disableInput}
             />
+            <button onClick={handleClone} disabled={disableInput}>
+              <GitBranch className="button-icon" />
+              Clone Repo
+            </button>
           </div>
-          <button
-            onClick={handleClone}
-            disabled={isLoading || !repoUrl}
-            className="clone-button"
-          >
-            {isLoading ? (
-              <>
-                <div className="loader"></div>
-                Cloning...
-              </>
-            ) : (
-              <>
-                <GitBranch className="button-icon" />
-                Clone Repository
-              </>
-            )}
-          </button>
-          {status !== "idle" && (
-            <div className={`alert ${status}`}>{statusMessage}</div>
-          )}
-          {status === "success" && (
-            <div className="success-link">
-              <a href={deployedUrl} target="_blank" rel="noopener noreferrer">
-                Go to Deployed Application
-              </a>
-            </div>
-          )}
         </div>
+
+        {showTerminal && (
+          <div ref={terminalRef} className={`terminal ${showTerminal ? 'show-terminal' : ''}`}>
+            {wsMessages.map((msg, index) => (
+              <div key={index} className={getMessageClass(msg)}>
+                {msg.includes('<a') ? (
+                  <span dangerouslySetInnerHTML={{ __html: msg }} />
+                ) : (
+                  msg
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      <footer>
+            Built by <a target='_blank' href="https://github.com/BCHAYMAE" rel="noreferrer">Chaymae BELLAHCENE</a> | <a target='_blank' href="https://github.com/drawliin" rel="noreferrer">Houssam Eddine HAMOUICH</a> 
+      </footer>
     </div>
   );
 }

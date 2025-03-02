@@ -4,16 +4,55 @@ const simpleGit = require('simple-git');
 const fs = require('fs');
 const { exec } = require('child_process');
 const path = require('path');
-const http = require('http'); // Import HTTP module
+const http = require('http'); 
+const { Server } = require('socket.io'); // Import socket.io
+
 
 const app = express();
 const port = 5001;
 
 const server = http.createServer(app); // Create HTTP server
+const io = new Server(server, {
+    cors: {
+        origin: ["http://localhost:5174", "http://localhost:5173", "http://localhost:5175"], 
+        methods: ["GET", "POST"]
+    }
+});
 
 // Enable CORS
 app.use(cors());
 app.use(express.json());
+
+
+io.on('connection', (socket) => {
+  console.log('Client connected');
+  socket.on('disconnect', () => {
+      console.log('Client disconnected');
+  });
+});
+
+// Function to send WebSocket status updates
+const sendStatus = (message) => {
+  io.emit('status', message);
+};
+
+const statusQueue = [];
+let isProcessing = false;
+const processStatusQueue = () => {
+  if (statusQueue.length === 0 || isProcessing) return;
+  isProcessing = true;
+  const { message, delay } = statusQueue.shift();
+  setTimeout(() => {
+    sendStatus(message);
+    isProcessing = false;
+    processStatusQueue();
+  }, delay);
+};
+
+const sendStatusDelayed = (message, delay = 1000) => {
+  statusQueue.push({ message, delay });
+  processStatusQueue();
+};
 
 // Initialize simple-git
 const git = simpleGit();
@@ -26,244 +65,209 @@ const generateUniqueFolderName = (repoUrl) => {
   return path.join(__dirname, 'cloned-repos', uniqueName);
 };
 
-// Function to check if the cloned repo has the full-stack app structure
+// CHECK URL VALIDATION
+const validateRepositoryUrl = async (repoUrl) => {
+  const ALLOWED_DOMAINS = ['github.com', 'gitlab.com', 'bitbucket.org'];
+
+  // Validate URL format
+  const isValidGitUrl = (url) => {
+    const gitUrlPattern = /^(https?:\/\/)?([\w.-]+)\.([a-z]{2,})(\/[\w.-]+)*\/?(\/)?(\.git)?$/i;
+    return gitUrlPattern.test(url);
+  };
+
+  // Check if the domain is allowed
+  const isValidDomain = (url) => {
+    try {
+      const { hostname } = new URL(url);
+      return ALLOWED_DOMAINS.some(domain => hostname.endsWith(domain));
+    } catch (error) {
+      return false; // Invalid URL format
+    }
+  };
+
+  // Prevent SSRF
+  const isSafeUrl = (url) => {
+    try {
+      const { hostname } = new URL(url);
+      const isPrivateIP = /^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)/.test(hostname);
+      const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+      return !isPrivateIP && !isLocalhost;
+    } catch (error) {
+      return false; // Invalid URL format
+    }
+  };
+
+  // Perform all checks
+  if (!isValidGitUrl(repoUrl)) {
+    return false;
+  }
+
+  if (!isValidDomain(repoUrl)) {
+    return false;
+  }
+
+  if (!isSafeUrl(repoUrl)) {
+    return false;
+  }
+  return true;
+};
+
+// Function to check if the cloned repo has the full-stack app structure and retrieves the folders name
 const isFullStackApp = (repoPath) => {
-  const requiredFolders = ['frontend', 'backend', 'database'];
-  return requiredFolders.every(folder => fs.existsSync(path.join(repoPath, folder)));
+  // Define possible folder names for each component
+  const frontendNames = ['frontend', 'client', 'web', 'ui', 'app'];
+  const backendNames = ['backend', 'server', 'api', 'services'];
+  const databaseNames = ['database', 'db', 'data', 'storage'];
+
+  // Function to find the folder name for a component
+  const findComponentFolder = (componentNames) => {
+    const folders = fs.readdirSync(repoPath);
+    for (const folder of folders) {
+      if (componentNames.includes(folder.toLowerCase())) {
+        return folder; // Return the actual folder name
+      }
+    }
+    return null; // Return null if no matching folder is found
+  };
+
+  // Find folders for each component
+  const frontendFolder = findComponentFolder(frontendNames);
+  const backendFolder = findComponentFolder(backendNames);
+  const databaseFolder = findComponentFolder(databaseNames);
+
+  // Check if all required components exist
+  const valid = frontendFolder && backendFolder && databaseFolder;
+
+  // Return the result as an object
+  if(valid){
+    return {frontend: frontendFolder, backend: backendFolder, database: databaseFolder}
+  }
+  return false;
 };
 
 // Deleting unwanted repos
 const deleteRepo = (repoPath) => {
-  try {
-    fs.rmSync(repoPath, { recursive: true, force: true });
-    console.log(`Repository at ${repoPath} has been deleted.`);
-  } catch (err) {
-    console.error('Error deleting the repository:', err);
-  }
+    try {
+      fs.rmSync(repoPath, { recursive: true, force: true }); 
+      console.log(`Repository at ${repoPath} has been deleted.`);
+    } catch (err) {
+      console.error('Error deleting the repository:', err);
+    }
 };
 
 // Function to detect the frontend technology
-const detectFrontendTechnology = (repoPath) => {
-  const packageJsonPath = path.join(repoPath, 'frontend', 'package.json');
+const detectFrontendTechnology = (repoPath, folderName) => {
+  const packageJsonPath = path.join(repoPath, folderName.frontend, 'package.json');
   if (fs.existsSync(packageJsonPath)) {
+
     const packageJson = require(packageJsonPath);
     if (packageJson.dependencies && packageJson.dependencies.react) {
-      const viteJSBundlerPath = path.join(repoPath, 'frontend', 'vite.config.js');
-      const viteTSBundlerPath = path.join(repoPath, 'frontend', 'vite.config.ts');
-      if (fs.existsSync(viteJSBundlerPath) || fs.existsSync(viteTSBundlerPath)) {
-        console.log('React with Vite detected');
+      const viteJSBundlerPath = path.join(repoPath, folderName.frontend, 'vite.config.js');
+      const viteTSBundlerPath = path.join(repoPath, folderName.frontend, 'vite.config.ts');
+      if(fs.existsSync(viteJSBundlerPath) || fs.existsSync(viteTSBundlerPath)){
         return 'react-vite';
       }
-      console.log('React detected');
       return 'react';
     } else if (packageJson.dependencies && packageJson.dependencies.vue) {
-      console.log('Vue detected');
       return 'vue';
-    } else if (fs.existsSync(path.join(repoPath, 'frontend', 'angular.json'))) {
-      console.log('Angular detected');
-      return 'angular';
-    }
+    } 
   }
-  console.log('Unknown frontend technology');
   return 'unknown';
 };
 
 // Function to detect the backend technology and its PORT
-const detectBackendTechnology = (repoPath) => {
-  const backendPath = path.join(repoPath, 'backend');
+const detectBackendTechnology = (repoPath, folderName) => {
+  const backendPath = path.join(repoPath, folderName.backend);
   const reqFilePath = path.join(backendPath, 'requirements.txt');
 
-  // Node.js Detection
+  // ✅ Node.js Detection
   if (fs.existsSync(path.join(backendPath, 'package.json'))) return 'nodejs';
 
-  // Python Backend Detection
+  // ✅ Python Backend Detection
   if (fs.existsSync(reqFilePath)) {
+
     let buffer = fs.readFileSync(reqFilePath);
     let requirements = buffer.toString('utf16le'); // Convert from UTF-16 to string
     requirements = requirements.replace(/\r/g, '').trim().toLowerCase(); // Normalize line endings
+
     if (requirements.includes('flask')) return 'python-flask';
   }
-
   return 'unknown';
 };
 
-const detectPythonEntryFile = (repoPath) => {
-  const backendPath = path.join(repoPath, 'backend');
+const detectPythonEntryFile = (repoPath, folderName) => {
+  const backendPath = path.join(repoPath, folderName.backend);
   // Get all Python files
   const pyFiles = fs.readdirSync(backendPath).filter(file => file.endsWith('.py'));
 
-  // Look for __main__ function
+  // ✅ Look for __main__ function
   for (const file of pyFiles) {
-    const filePath = path.join(backendPath, file);
-    const content = fs.readFileSync(filePath, 'utf-8');
-    if (content.includes('__main__')) return [file];
+      const filePath = path.join(backendPath, file);
+      const content = fs.readFileSync(filePath, 'utf-8');
+      if (content.includes('__main__')) return [file];
   }
 
   return null;
 };
 
 // Function to detect database used
-const detectDatabase = (repoPath, backendTech) => {
-  console.log(`Detecting database for backend technology: ${backendTech}`);
+const detectDatabase = (repoPath, backendTech, folderName) => {
 
-  const possiblePackagePaths = [
-    path.join(repoPath, 'backend', 'package.json'),
-    path.join(repoPath, 'package.json'),
-  ];
-
-  const possibleEnvPaths = [
-    path.join(repoPath, 'backend', '.env'),
-    path.join(repoPath, 'database', '.env'),
-    path.join(repoPath, '.env'),
-  ];
-
-  const configFilePath = path.join(repoPath, 'backend', 'config.py');
+  // If no database is found in the backend, check the database folder for .env
+  const databasePath = path.join(repoPath, folderName.database);
+  if (fs.existsSync(databasePath)) {
+    const envPath = path.join(databasePath, '.env');
+    if (fs.existsSync(envPath)) {
+      const envContent = fs.readFileSync(envPath, 'utf-8');
+      if (envContent.includes('DB_CONNECTION=mysql')) return 'mysql';
+      if (envContent.includes('DB_CONNECTION=pgsql')) return 'postgres';
+      if (envContent.includes('MONGO_URI')) return 'mongodb';
+      
+    }
+  }
 
   switch (backendTech) {
     case 'nodejs': {
-      let packageJson = null;
-      for (const packageJsonPath of possiblePackagePaths) {
-        if (fs.existsSync(packageJsonPath)) {
-          try {
-            packageJson = require(packageJsonPath);
-            console.log(`Found package.json at ${packageJsonPath}`);
-            break;
-          } catch (error) {
-            console.warn(`Failed to parse package.json at ${packageJsonPath}: ${error.message}`);
-          }
-        }
-      }
-
-      if (packageJson && packageJson.dependencies) {
-        const deps = packageJson.dependencies;
-        if (deps['mysql'] || deps['mysql2']) {
-          console.log('MySQL detected in package.json');
-          return 'mysql';
-        }
-        if (deps['pg']) {
-          console.log('Postgres detected in package.json');
-          return 'postgres';
-        }
-        if (deps['mongodb'] || deps['mongoose']) {
-          console.log('MongoDB detected in package.json');
-          return 'mongodb';
-        }
-        if (deps['redis']) {
-          console.log('Redis detected in package.json');
-          return 'redis';
-        }
-        if (deps['sqlite3']) {
-          console.log('SQLite detected in package.json');
-          return 'sqlite';
+      const packageJsonPath = path.join(repoPath, folderName.backend, 'package.json');
+      if (fs.existsSync(packageJsonPath)) {
+        const packageJson = require(packageJsonPath);
+        if (packageJson.dependencies) {
+          if (packageJson.dependencies['mysql'] || packageJson.dependencies['mysql2']) return 'mysql';
+          if (packageJson.dependencies['pg']) return 'postgres';
+          if (packageJson.dependencies['mongodb'] || packageJson.dependencies['mongoose']) return 'mongodb';
         }
       }
       break;
     }
 
     case 'python-flask': {
-      const requirementsPath = path.join(repoPath, 'backend', 'requirements.txt');
+      const requirementsPath = path.join(repoPath, folderName.backend, 'requirements.txt');
       if (fs.existsSync(requirementsPath)) {
-        try {
-          const buffer = fs.readFileSync(requirementsPath, 'utf-8'); // Changed encoding
-          const requirements = buffer.replace(/\r/g, '').trim().toLowerCase();
-
-          if (requirements.includes('mysqlclient')) {
-            console.log('MySQL detected in requirements.txt');
-            return 'mysql';
-          }
-          if (requirements.includes('psycopg2')) {
-            console.log('Postgres detected in requirements.txt');
-            return 'postgres';
-          }
-          if (requirements.includes('pymongo')) {
-            console.log('MongoDB detected in requirements.txt');
-            return 'mongodb';
-          }
-          if (requirements.includes('sqlite')) {
-            console.log('SQLite detected in requirements.txt');
-            return 'sqlite';
-          }
-        } catch (error) {
-          console.warn(`Error reading requirements.txt: ${error.message}`);
-        }
-      } else {
-        console.log(`requirements.txt not found at ${requirementsPath}`);
+        let buffer = fs.readFileSync(requirementsPath);
+        let requirements = buffer.toString('utf16le');
+        requirements = requirements.replace(/\r/g, '').trim().toLowerCase();
+        if (requirements.includes('mysqlclient') ||
+            requirements.includes('mysql-connector-python') ||
+            requirements.includes('pymysql') ||
+            requirements.includes('sqlalchemy') && requirements.includes('mysql')
+        ) return 'mysql';
+        if (requirements.includes('psycopg2')) return 'postgres';
+        if (requirements.includes('pymongo')) return 'mongodb';
       }
-
-      if (fs.existsSync(configFilePath)) {
-        try {
-          const configContent = fs.readFileSync(configFilePath, 'utf-8');
-          if (configContent.includes('mysql')) {
-            console.log('MySQL detected in config.py');
-            return 'mysql';
-          }
-          if (configContent.includes('postgresql')) {
-            console.log('Postgres detected in config.py');
-            return 'postgres';
-          }
-          if (configContent.includes('mongodb')) {
-            console.log('MongoDB detected in config.py');
-            return 'mongodb';
-          }
-          if (configContent.includes('sqlite')) {
-            console.log('SQLite detected in config.py');
-            return 'sqlite';
-          }
-        } catch (error) {
-          console.warn(`Error reading config.py: ${error.message}`);
-        }
-      } else {
-        console.log(`config.py not found at ${configFilePath}`);
-      }
-      break;
+      break; 
     }
-
     default:
-      console.log('No valid backend technology detected.');
-      return 'unknown';
+      throw new Error('No database found!!');
   }
-
-  // Fallback: Check for .env files
-  for (const envPath of possibleEnvPaths) {
-    if (fs.existsSync(envPath)) {
-      console.log(`Found .env file at ${envPath}`);
-      const envContent = fs.readFileSync(envPath, 'utf-8');
-
-      if (envContent.includes('DB_CONNECTION=mysql')) {
-        console.log('MySQL detected in .env');
-        return 'mysql';
-      }
-      if (envContent.includes('DB_CONNECTION=pgsql')) {
-        console.log('Postgres detected in .env');
-        return 'postgres';
-      }
-      if (envContent.includes('MONGO_URI')) {
-        console.log('MongoDB detected in .env');
-        return 'mongodb';
-      }
-      if (envContent.includes('REDIS_URL')) {
-        console.log('Redis detected in .env');
-        return 'redis';
-      }
-      if (envContent.includes('DB_CONNECTION=sqlite')) {
-        console.log('SQLite detected in .env');
-        return 'sqlite';
-      }
-    } else {
-      console.log(`.env file not found at ${envPath}`);
-    }
-  }
-
-  console.log('No database detected.');
-  return 'unknown';
 };
 
 
 // Function to create a Dockerfile for the frontend based on technology
-const createFrontendDockerfile = (repoPath, frontendTech) => {
+const createFrontendDockerfile = (repoPath, frontendTech, folderName) => {
+
   let API_URL;
   let dockerfile;
-  if (frontendTech == 'react' || frontendTech == 'react-vite' || frontendTech == 'vue') {
+  if(frontendTech == 'react-vite' || frontendTech == 'vue'){
     API_URL = 'VITE_API_URL';
     dockerfile = `
     # Dockerfile for React app
@@ -275,19 +279,31 @@ const createFrontendDockerfile = (repoPath, frontendTech) => {
       RUN npm install
       COPY ./ ./
   `;
-  } else if (frontendTech == 'angular') {
-    API_URL = '';
+  }else if(frontendTech == 'react'){
+    API_URL ='REACT_APP_API_URL';
+    dockerfile = `
+    # Dockerfile for React app
+      FROM node:alpine AS build
+      ARG ${API_URL}
+      ENV ${API_URL}='http://localhost:4002/api'
+      WORKDIR /app
+      COPY package*.json ./
+      RUN npm install
+      COPY ./ ./
+  `;
   }
-
-  fs.writeFileSync(path.join(repoPath, 'frontend', 'Dockerfile'), dockerfile);
+  
+  
+  
+  fs.writeFileSync(path.join(repoPath, folderName.frontend, 'Dockerfile'), dockerfile);
 };
 
 // Function to create a Dockerfile for the backend based on technology
-const createBackendDockerfile = (repoPath, backendTech) => {
+const createBackendDockerfile = (repoPath, backendTech, folderName) => {
   let dockerfile = '';
   switch (backendTech) {
     case 'nodejs': {
-      const packageJson = require(path.join(repoPath, 'backend', 'package.json'));
+      const packageJson = require(path.join(repoPath, folderName.backend, 'package.json'));
       dockerfile = `
         # Dockerfile for Node.js backend
         FROM node:alpine
@@ -301,7 +317,7 @@ const createBackendDockerfile = (repoPath, backendTech) => {
     }
 
     case 'python-flask': {
-      const pythonEntryFile = detectPythonEntryFile(repoPath);
+      const pythonEntryFile = detectPythonEntryFile(repoPath, folderName);
       if (!pythonEntryFile || pythonEntryFile.length === 0) {
         throw new Error('No valid Python entry file found.');
       }
@@ -318,11 +334,11 @@ const createBackendDockerfile = (repoPath, backendTech) => {
     default:
       throw new Error(`Unsupported backend technology: ${backendTech}`);
   }
-  fs.writeFileSync(path.join(repoPath, 'backend', 'Dockerfile'), dockerfile);
+  fs.writeFileSync(path.join(repoPath, folderName.backend, 'Dockerfile'), dockerfile);
 };
 
 // Function to create a Dockerfile for the database based on technology
-const createDatabaseDockerfile = (repoPath, databaseType) => {
+const createDatabaseDockerfile = (repoPath, databaseType, folderName) => {
   let dockerfile = '';
 
   switch (databaseType) {
@@ -357,20 +373,12 @@ const createDatabaseDockerfile = (repoPath, databaseType) => {
       `;
       break;
 
-    case 'sqlite':
-      dockerfile = `
-        FROM nouchka/sqlite3
-        VOLUME /data
-        EXPOSE 8082
-      `;
-      break;
-
     default:
       console.log('No valid database detected.');
       return;
   }
 
-  fs.writeFileSync(path.join(repoPath, 'database', 'Dockerfile'), dockerfile);
+  fs.writeFileSync(path.join(repoPath, folderName.database, 'Dockerfile'), dockerfile);
 };
 
 // generate nginx config
@@ -440,49 +448,52 @@ const createDockerignore = (repoPath) => {
 // get build path
 const getBuildPath = (frontendTech) => {
   switch (frontendTech) {
-    case 'react':
-      return 'build';
-    case 'react-vite':
-    case 'vue':
-      return 'dist';
-    case 'angular':
-      return 'dist/frontend/browser';
-    default:
-      return null; // Handle unsupported frontend tech
+      case 'react':
+          return 'build';
+      case 'react-vite':
+      case 'vue':
+          return 'dist';
+      default:
+          return null; 
   }
 };
 
 // Function to create a docker-compose.yml file
-const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseType) => {
+const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseType, clonePath, folderName) => {
   const frontendPath = getBuildPath(frontendTech);
+  // extract folder name
+  const folderNameNetwork = path.basename(clonePath);    
 
   let frontendService = '';
   let backendService = '';
   let databaseService = '';
 
+  const networkName = `repo-network-${Math.floor(Math.random() * 1000)}`;
+
   if (frontendPath) {
     frontendService = `
       frontend:
         build:
-          context: ./frontend
+          context: ./${folderName.frontend}
           dockerfile: Dockerfile
         volumes:
-          - ./frontend/${frontendPath}:/app/${frontendPath}  # Valid volume mapping
+          - ./${folderName.frontend}/${frontendPath}:/app/${frontendPath}  # Valid volume mapping
         command: ["npm", "run", "build"]
         depends_on:
           - backend
     `;
   }
+  
 
-  switch (`${backendTech}-${databaseType}`) {
+  switch(`${backendTech}-${databaseType}`){
     case "nodejs-mysql":
       backendService = `
         backend:
           build:
-            context: ./backend
+            context: ./${folderName.backend}
             dockerfile: Dockerfile
           ports:
-            - "4002:4002"
+            - "4002:4002"  
           depends_on:
             db:
               condition: service_healthy
@@ -496,7 +507,7 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
       databaseService = `
         db:
           build:
-            context: ./database
+            context: ./${folderName.database}
             dockerfile: Dockerfile
           environment:
             MYSQL_ROOT_PASSWORD: root
@@ -504,8 +515,8 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
           ports:
             - "3307:3307"
           volumes:
-            - db-data:/var/lib/mysql
-            - ./database/init:/docker-entrypoint-initdb.d
+            - ${folderNameNetwork}-data:/var/lib/mysql
+            - ./${folderName.database}/init:/docker-entrypoint-initdb.d
           healthcheck:
             test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
             interval: 10s
@@ -517,10 +528,10 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
       backendService = `
         backend:
           build:
-            context: ./backend
+            context: ./${folderName.backend}
             dockerfile: Dockerfile
           ports:
-            - "4002:4002"
+            - "4002:4002"  
           depends_on:
            - db
           environment:
@@ -530,26 +541,28 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
       databaseService = `
         db:
           build:
-            context: ./database
+            context: ./${folderName.database}
             dockerfile: Dockerfile
+
           ports:
             - "27017:27017"
           volumes:
-            - db-data:/data/db
-            - ./database/init:/docker-entrypoint-initdb.d
+            - ${folderNameNetwork}-data:/data/db
+            - ./${folderName.database}/init:/docker-entrypoint-initdb.d
       `;
       break;
     case "nodejs-postgres":
       backendService = `
         backend:
           build:
-            context: ./backend
+            context: ./${folderName.backend}
             dockerfile: Dockerfile
           ports:
-            - "4002:4002"
+            - "4002:4002"  
           depends_on:
             db:
               condition: service_healthy
+
           environment:
             - PORT=4002
             - DB_HOST=db
@@ -560,8 +573,9 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
       databaseService = `
         db:
           build:
-            context: ./database
+            context: ./${folderName.database}
             dockerfile: Dockerfile
+
           ports:
             - "5432:5432"
           environment:
@@ -569,8 +583,8 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
             POSTGRES_PASSWORD: postgres
             POSTGRES_DB: mydb
           volumes:
-            - db-data:/var/lib/postgresql/data
-            - ./database/init:/docker-entrypoint-initdb.d
+            - ${folderNameNetwork}-data:/var/lib/postgresql/data
+            - ./${folderName.database}/init:/docker-entrypoint-initdb.d
           healthcheck:
             test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
             interval: 10s
@@ -579,10 +593,10 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
       `;
       break;
     case 'python-flask-mysql':
-      backendService = `
+      backendService=`
         backend:
           build:
-            context: ./backend
+            context: ./${folderName.backend}
             dockerfile: Dockerfile
           ports:
             - "4002:4002"
@@ -593,35 +607,35 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
           environment:
             - DB_HOST=db
             - DB_USER=root
-            - DB_PASSWORD=root
+            - DB_PASS=root
             - DB_NAME=mydb
             - PORT=4002
       `;
-      databaseService = `
+      databaseService=`
         db:
           build:
-            context: ./database
+            context: ./${folderName.database}
             dockerfile: Dockerfile
           environment:
             MYSQL_ROOT_PASSWORD: root
             MYSQL_DATABASE: mydb
           ports:
-            - "3307:3306"
+            - "3307:3307"
           volumes:
-            - db-data:/var/lib/mysql
-            - ./database/init:/docker-entrypoint-initdb.d
+            - ${folderNameNetwork}-data:/var/lib/mysql
+            - ./${folderName.database}/init:/docker-entrypoint-initdb.d
           healthcheck:
-            test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1",  "-uroot", "-proot"]
+            test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
             interval: 10s
             retries: 5
             start_period: 30s
       `;
       break;
-    case "python-flask-mongodb":
+    case "python-flask-mongodb": 
       backendService = `
         backend:
             build:
-              context: ./backend
+              context: ./${folderName.backend}
               dockerfile: Dockerfile
             ports:
               - "4002:4002"
@@ -635,41 +649,21 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
       databaseService = `
         db:
           build:
-            context: ./database
+            context: ./${folderName.database}
             dockerfile: Dockerfile
+
           ports:
             - "27017:27017"
           volumes:
-            - db-data:/data/db
-            - ./database/init:/docker-entrypoint-initdb.d
-      `;
-      break;
-    case "python-flask-sqlite":
-      backendService = `
-        backend:
-          build:
-            context: ./backend
-            dockerfile: Dockerfile
-          ports:
-            - "4002:4002"
-          command: ["gunicorn", "-b", ":4002", "app:app"]
-          environment:
-            - PORT=4002
-      `;
-      databaseService = `
-        db:
-          build:
-            context: ./database
-            dockerfile: Dockerfile
-          ports:
-            - "8082:8082"
-          volumes:
-            - db-data:/data
+            - ${folderNameNetwork}-data:/data/db
+            - ./${folderName.database}/init:/docker-entrypoint-initdb.d
       `;
       break;
     default:
       throw new Error("Can't create backend or database services");
   }
+  
+
 
   const dockerCompose = `
     services:
@@ -681,21 +675,21 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
         image: nginx:alpine
         volumes:
           - ./nginx.conf:/etc/nginx/nginx.conf:ro
-          - ./frontend/${frontendPath}:/usr/share/nginx/html  # Serve frontend files (Ensure frontendPath is correct)
+          - ./${folderName.frontend}/${frontendPath}:/usr/share/nginx/html  # Serve frontend files (Ensure frontendPath is correct)
           
         ports:
-          - "8080:80"  # Expose Nginx on port 8080
+          - "8081:80"
         depends_on:
           - backend
           ${frontendPath ? "- frontend" : ""}
           - db
 
 networks:
-  app-network:
+  ${networkName}:
     driver: bridge
 
 volumes:
-  db-data:
+  ${folderNameNetwork}-data:
   `;
   console.log(dockerCompose);
   // Ensure the output is correctly written to the file
@@ -706,7 +700,7 @@ volumes:
 // Function to check nginx is serving
 const checkNginx = async () => {
   try {
-    const response = await fetch('http://localhost:8080'); // Checking the deployed frontend
+    const response = await fetch(`http://localhost:8081`); // Checking the deployed frontend
     if (response.status === 200) {
       return true; // Nginx is ready
     }
@@ -718,18 +712,19 @@ const checkNginx = async () => {
 };
 
 // Clone the repository based on the URL provided in the request
-app.post('/api/clone-repo', (req, res) => {
+app.post('/api/clone-repo', async (req, res) => {
   const { repoUrl } = req.body;
 
-  if (!repoUrl) {
-    console.log('Repository URL is required'); 
-    res.status(400).send('Repository URL is required');
+  // url validation
+  const validatedUrl = await validateRepositoryUrl(repoUrl);
+  if(!validatedUrl){
+    sendStatus('🚨 Not a valid URL');
     return;
   }
 
   // Create a unique folder for the new repository
   const clonePath = generateUniqueFolderName(repoUrl);
-  
+  sendStatus('📥 Cloning repository...'); 
 
   // Clone the repository
   git.clone(repoUrl, clonePath)
@@ -737,31 +732,36 @@ app.post('/api/clone-repo', (req, res) => {
       
       try {
 
-        if (!isFullStackApp(clonePath)) {
+        const repoFoldersName = isFullStackApp(clonePath)
+        if (!repoFoldersName) {
           throw new Error("This project does not have a valid full-stack app structure.");
         }
 
-         // Detect frontend and backend technologies
-        const frontendTech = detectFrontendTechnology(clonePath);
-        const backendTech = detectBackendTechnology(clonePath);
-        const databaseTech = detectDatabase(clonePath, backendTech);
+        sendStatusDelayed('✅ Repository cloned successfully!', 1500);
+
+          // Detect frontend and backend technologies
+        const frontendTech = detectFrontendTechnology(clonePath, repoFoldersName);
+        const backendTech = detectBackendTechnology(clonePath, repoFoldersName);
+        const databaseTech = detectDatabase(clonePath, backendTech, repoFoldersName);
 
         console.log(frontendTech, backendTech, databaseTech);
 
         if(frontendTech === 'unknown'){
-          throw new Error('Frontend technology not detected. Deployment cannot proceed.');
+          throw new Error('Frontend technology not detected. Deployment cannot proceed.')
         }
         if(backendTech === 'unknown'){
-          throw new Error('Backend technology not detected. Deployment cannot proceed.');
+          throw new Error('Backend technology not detected. Deployment cannot proceed.')
         }
         if(databaseTech === 'unknown'){
-          throw new Error('Database technology not detected. Deployment cannot proceed.');
+          throw new Error('Database technology not detected. Deployment cannot proceed.')
         }
 
         // Create Dockerfiles for frontend, backend and database
-        createFrontendDockerfile(clonePath, frontendTech);
-        createBackendDockerfile(clonePath, backendTech);
-        createDatabaseDockerfile(clonePath, databaseTech);
+        sendStatusDelayed('⚙️ Creating Dockerfiles...', 2000);
+        createFrontendDockerfile(clonePath, frontendTech, repoFoldersName);
+        createBackendDockerfile(clonePath, backendTech, repoFoldersName);
+        createDatabaseDockerfile(clonePath, databaseTech, repoFoldersName);
+        sendStatusDelayed('✅ Dockerfiles created!', 4000);
               
   
         // Create dockerignore
@@ -771,8 +771,11 @@ app.post('/api/clone-repo', (req, res) => {
         createNginxConfig(clonePath);
         
         // Create docker-compose.yml
-        createDockerComposeFile(clonePath, frontendTech, backendTech, databaseTech);
-                
+        createDockerComposeFile(clonePath, frontendTech, backendTech, databaseTech, clonePath, repoFoldersName);
+        sendStatusDelayed('✅ Docker-compose created!', 7000);
+        
+        sendStatusDelayed('🚀 Starting Deployment...', 9000);
+        
         //Automatically build and deploy
         await new Promise((resolve, reject) => {
           exec(`cd ${clonePath} && docker-compose up --build -d`, (err, stdout, stderr) => {
@@ -782,6 +785,8 @@ app.post('/api/clone-repo', (req, res) => {
                       reject(new Error("Deployment Failed: Port Conflict. Another service is using the required port."));
                   } else if (stderr.includes("error during connect")) {
                       reject(new Error("Docker Desktop is not running. Please start Docker and try again."));
+                  } else if (stderr.includes("exec: \"gunicorn\": executable file not found in $PATH")) {
+                      reject(new Error("Deployment Failed: Gunicorn is not installed. Please ensure Gunicorn is added to your application dependencies."));
                   } else {
                       reject(new Error(`Error deploying application: ${stderr}`));
                   }
@@ -790,7 +795,7 @@ app.post('/api/clone-repo', (req, res) => {
                   resolve();
               }
           });
-      });
+        });
 
       // Check if Nginx is ready
       let retries = 50;
@@ -804,24 +809,29 @@ app.post('/api/clone-repo', (req, res) => {
       }
 
       if (!nginxReady) {
-          throw new Error("Deployment Failed: Nginx did not become ready within the expected time.");
+          throw new Error("🚨 Deployment Failed: Nginx did not become ready within the expected time.");
       }
-      console.log('Ready to go');
-      res.status(200).send({ message: 'Deployment successful', url: 'http://localhost:8080' });
       
-  }catch(error) {
-      console.error(`Error: ${error.message}`);
-      deleteRepo(clonePath);
-      res.status(500).send(`Error: ${error.message}`);
-  }
-})
-.catch((err) => {
-      console.log('Error cloning repo:', err);
+      sendStatus('🚀 Deployment completed successfully!');
+      console.log('Ready to go');
+      sendStatus(`🔗 <a href='http://localhost:8081' target='_blank'>View Deployed App</a>`);
+
+      
+      }catch(error) {
+        console.error(`Error: ${error.message}`)
+        deleteRepo(clonePath);
+        // added this because websocket messages takes times to get sended.. and the exec function got executed before ws send messages.. which leads to the appearance of messages after Errors
+        sendStatusDelayed(`🚨 Error: ${error.message}`, 8500);
+      
+      }
+    })
+    .catch((err) => {
+      console.error('Error cloning repo:', err);
       if(err.message.includes('Repository not found')){
-        res.status(404).send('Repository not found');
+        sendStatus(`🚨 Repository not found! Please check the repo URL.`);
       }else{
-        console.log(`Error Cloning Repository: ${err.message}`);
-        res.status(500).send(`Error Cloning Repository: ${err.message}`);
+        sendStatus(`🚨 Error Cloning Repository`);
+
       }
     });
 });

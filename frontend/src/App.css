@@ -1,203 +1,352 @@
-/* General Styles */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
+
 body {
-  font-family: Arial, sans-serif;
-  background-color: #27445D;
-  margin: 0;
-  padding: 0;
+    font-family: 'Poppins', sans-serif;
+    margin: 0;
+    padding: 0;
+    overflow: hidden; /* Prevents scrollbars from appearing */
 }
 
-/* Navbar */
+* {
+    margin: 0;
+    padding: 0;
+}
+
+.container {
+    position: relative;
+    height: 100vh;
+    width: 100vw;
+    background: linear-gradient(135deg, #1e1e1e, #2c2c54);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* Ensures floating icons stay within the container */
+}
+
 .navbar {
-  background-color: #1f2937;
-  color: #fff;
-  padding: 1rem 2rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  position: fixed; /* Make navbar fixed */
-  top: 0; /* Align it to the top */
-  left: 0;
-  right: 0;
-  z-index: 10; /* Ensure navbar is on top of other content */
+    height: 5vh;
+    display: flex;
+    justify-content: space-around;
+    align-items: flex-end;
+    padding: 20px 50px;
+    color: #ffffff;
+    font-size: 1.5rem;
+    font-weight: bold;
 }
 
-.navbar nav {
-  font-size: 1.5rem;
-  font-weight: bold;
+.navbar a,
+.navbar .home-link {
+    text-decoration: none;
+    color: #ffffff;
+    cursor: pointer;
+    transition: color 0.3s ease-in-out;
 }
 
-.navbar-links a {
-  color: #9ca3af;
-  margin-left: 1.5rem;
-  text-decoration: none;
-  transition: color 0.3s ease;
+.navbar div {
+    display: flex;
+    gap: 15px;
+    font-size: 1.1rem;
 }
 
-.navbar-links a:hover {
-  color: #fff;
+.navbar a:hover,
+.navbar .home-link:hover {
+    color: cyan;
 }
 
-/* Deploy Form Container */
-.deploy-form-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 80vh;
-  margin-top: 80px; /* Push content below fixed navbar */
+.navbar a[target="_blank"] {
+    color: lightblue;
 }
 
-/* Deploy Form Card */
-.deploy-form-card {
-  background-color: #fff;
-  padding: 2rem;
-  border-radius: 12px;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-  width: 400px;
-  text-align: center;
+.navbar a[target="_blank"]:hover {
+    color: cyan;
 }
 
-.deploy-form-title {
-  font-size: 1.75rem;
-  margin-bottom: 1.5rem;
-  color: #1f2937;
+/* Immersive Background */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 85vh;
+    transition: padding 0.5s ease-in-out;
 }
 
-/* Form Group */
-.form-group {
-  margin-bottom: 1.5rem;
-  text-align: left;
+/* Modern Title Styling */
+.title {
+    font-size: 2.8rem;
+    font-weight: bold;
+    color: #ffffff;
+    text-shadow: 0px 0px 10px rgba(0, 255, 255, 0.9);
+    margin-bottom: 20px;
+    display: flex; /* Ensures image and text are in one line */
+    align-items: center; /* Aligns image and text properly */
+    gap: 15px; /* Adds space between logo and text */
+}
+.platform-name {
+  display: inline-block;
+  transition: opacity 0.5s ease-in-out;
 }
 
-.form-label {
-  display: block;
-  margin-bottom: 0.5rem;
-  font-weight: bold;
-  color: #374151;
+.opacity-100 {
+  opacity: 1;
 }
 
-.form-input {
-  width: 100%;
-  padding: 0.75rem;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  font-size: 1rem;
-  outline: none;
-  transition: border-color 0.3s ease;
+.opacity-0 {
+  opacity: 0;
 }
 
-.form-input:focus {
-  border-color: #3b82f6;
+
+.title img {
+    width: 55px; /* Adjust size as needed */
+    height: auto;
+}
+
+/* Input Container Styling */
+.input-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: transform 0.5s ease-in-out;
+}
+
+/* Moves input section up smoothly when terminal appears */
+.input-container.moved-up {
+    transform: translateY(-50px);
+}
+
+/* Glassmorphism Input Box */
+.input-box {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 15px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0px 4px 10px rgba(255, 255, 255, 0.2);
+    display: flex;
+    gap: 10px;
+}
+
+/* Input Field */
+.input-box input {
+    padding: 14px;
+    width: 255px;
+    border: none;
+    border-radius: 5px;
+    outline: none;
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    font-size: 1.05rem;
+    transition: all 0.3s ease-in-out;
+}
+
+.input-box input::placeholder {
+    color: #bbb;
+}
+
+.input-box input:focus {
+    background: rgba(255, 255, 255, 0.3);
+    box-shadow: 0px 0px 6px rgba(217, 217, 221, 0.671);
 }
 
 /* Clone Button */
-.clone-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  width: 100%;
-  padding: 0.75rem;
-  background-color: #3b82f6;
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  font-size: 1rem;
-  cursor: pointer;
-  transition: background-color 0.3s ease;
+.input-box button {
+    padding: 10px 15px;
+    background: #00bcd4;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: bold;
+    display: flex;
+    align-items: center; 
+    justify-content: center; 
+    gap: 5px;
+    transition: all 0.3s ease-in-out;
 }
 
-.clone-button:disabled {
-  background-color: #93c5fd;
-  cursor: not-allowed;
+.input-box button:hover {
+    background: #0097a7;
 }
 
-.clone-button:hover:not(:disabled) {
-  background-color: #2563eb;
+.input-box button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
 }
 
-.button-icon {
-  width: 20px;
-  height: 20px;
+/* Terminal Styling */
+.terminal {
+    background: rgba(0, 0, 0, 0.8);
+    color: #00ff00;
+    font-family: "Courier New", monospace;
+    padding: 20px;
+    width: 55%;
+    max-height: 45%;
+    overflow-y: auto;
+    border-radius: 10px;
+    border: 1px solid #00bcd4;
+    white-space: pre-wrap;
+    text-align: left;
+    box-shadow: 0px 4px 10px rgba(0, 255, 255, 0.2);
+    opacity: 0;
+    transform: scale(0.9);
+    transition: opacity 0.5s ease-in-out, transform 0.5s ease-in-out;
+
+    /* For Firefox */
+    scrollbar-width: thin;
+    scrollbar-color: #00ff00 #222;
+}
+/* WebKit (Chrome, Edge, Safari) */
+.terminal::-webkit-scrollbar {
+  width: 8px;
 }
 
-/* Loader */
-.loader {
-  border: 3px solid #f3f3f3;
-  border-top: 3px solid #3b82f6;
-  border-radius: 50%;
-  width: 16px;
-  height: 16px;
-  animation: spin 1s linear infinite;
+/* Scrollbar track */
+.terminal::-webkit-scrollbar-track {
+  background: #222; /* Dark background */
+  border-radius: 10px;
 }
 
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+/* Scrollbar handle */
+.terminal::-webkit-scrollbar-thumb {
+  background: #00ff00; /* Neon green scrollbar */
+  border-radius: 10px;
+  border: 2px solid #222; /* Adds a small border */
 }
 
-/* Alerts */
-.alert {
-  margin-top: 1rem;
-  padding: 0.75rem;
-  border-radius: 8px;
-  font-weight: bold;
+/* Scrollbar handle on hover */
+.terminal::-webkit-scrollbar-thumb:hover {
+  background: #00cc00; /* Slightly darker green */
 }
 
-.alert.success {
-  background-color: #d1fae5;
-  color: #065f46;
+
+
+
+
+/* Error Messages */
+.terminal .error-message {
+    color: red;
+    font-weight: bold;
 }
 
-.alert.error {
-  background-color: #fee2e2;
-  color: #991b1b;
+/* Link Messages */
+.terminal .link-message {
+    color: orange;
+    font-weight: bold;
 }
 
-.alert.loading {
-  background-color: #e0f2fe;
-  color: #0369a1;
+.terminal .link-message a {
+    color: orange;
+    text-decoration: underline;
+    font-weight: bold;
 }
 
-/* Success Link */
-.success-link {
-  margin-top: 1rem;
+.terminal .link-message a:hover {
+    color: yellow;
+    text-decoration: none;
 }
 
-.success-link a {
-  color: #3b82f6;
-  text-decoration: none;
-  font-weight: bold;
-  transition: color 0.3s ease;
+/* Smoothly Show Terminal */
+.show-terminal {
+    opacity: 1;
+    transform: scale(1);
 }
 
-.success-link a:hover {
-  color: #2563eb;
+/* Terminal Message Spacing */
+.terminal div {
+    margin-top: 10px;
+    margin-bottom: 5px;
 }
 
-/* Background Container */
-.background-container {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  overflow: hidden;
-  z-index: -1;
-}
-
-/* Floating Icon */
+/* Floating GitHub Icons */
 .floating-icon {
   position: absolute;
-  color: rgba(0, 0, 0, 0.1);
-  animation: float 15s linear infinite;
+  opacity: 0.1; /* Further reduced opacity for less visibility */
+  animation: float 60s linear infinite; /* Further increased duration for slower movement */
+  animation-fill-mode: forwards; /* Ensure the animation starts from the beginning */
+  animation-play-state: running; /* Ensure the animation is always running */
+  animation-delay: 0s; /* Remove any initial delay */
+  will-change: transform; /* Optimize performance */
 }
 
 @keyframes float {
-  from {
-    transform: translateY(100vh) rotate(0deg);
+  0% {
+    transform: translateY(0);
   }
-  to {
-    transform: translateY(-100vh) rotate(360deg);
+  100% {
+    transform: translateY(-100vh);
   }
+}
+
+.from-top {
+  animation-name: float-from-top;
+}
+
+@keyframes float-from-top {
+  0% {
+    transform: translateY(-100vh);
+  }
+  100% {
+    transform: translateY(100vh);
+  }
+}
+
+.from-bottom {
+  animation-name: float-from-bottom;
+}
+
+@keyframes float-from-bottom {
+  0% {
+    transform: translateY(100vh);
+  }
+  100% {
+    transform: translateY(-100vh);
+  }
+}
+
+.from-left {
+  animation-name: float-from-left;
+}
+
+@keyframes float-from-left {
+  0% {
+    transform: translateX(-100vw);
+  }
+  100% {
+    transform: translateX(100vw);
+  }
+}
+
+.from-right {
+  animation-name: float-from-right;
+}
+
+@keyframes float-from-right {
+  0% {
+    transform: translateX(100vw);
+  }
+  100% {
+    transform: translateX(-100vw);
+  }
+}
+
+
+footer {
+  position: relative;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center; 
+  font-size: 14px; 
+  color: #e7e3e3; 
+  font-weight: 500; 
+  
+}
+footer a {
+  color: #A569BD; 
+  text-decoration: none; 
+  font-weight: 600; 
+  transition: color 0.3s ease; 
+}
+footer a:hover {
+  color: #884EA0; 
+  text-decoration: underline; 
 }
