@@ -60,15 +60,13 @@ Ensure you have the following installed:
 
 ### 🔹 Deploy a Repository
 
-![Deployment Flow](./images/Capture.PNG)
-
 1. Open the frontend in your browser at http://localhost:5173.
 2. Enter your GitHub repository URL in the input field.
 3. Click the Clone Repo button.
 4. The backend will handle cloning the repository and setting up the deployment.
 5. Replace `https://github.com/your-username/your-repo.git` with your repository URL.
 
-## 🧪 Test with Sample Projects (these project were created by : (https://github.com/drawliin) )
+## 🧪 Test with Sample Projects (these project were created by : https://github.com/drawliin )
 
 To quickly test the deployment system, use one of these sample repositories:
 
