@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
-import { GitBranch, Github } from 'lucide-react'; // Import the Github icon from lucide-react
+import { GitBranch, Github } from 'lucide-react'; 
 import './App.css';
 
 const socket = io('http://localhost:5001', {
@@ -126,8 +126,8 @@ function DeployForm() {
       <div className='navbar'>
         <a href="/" className="home-link">GitRepo AutoDeploy App</a>
         <div>
-          <a href="https://github.com/drawliin/web-based-auto-deploy-system.git" target='_blank'>Source Code</a>
-          <a href="https://github.com/drawliin/web-based-auto-deploy-system/blob/main/README.md" target='_blank'>How It works?</a>
+          <a href="https://github.com/BCHAYMAE/deployment_app" target='_blank'>Source Code</a>
+          <a href="https://github.com/BCHAYMAE/deployment_app/blob/main/README.md" target='_blank'>How It works?</a>
           
         </div>
       </div>
@@ -135,7 +135,7 @@ function DeployForm() {
       <div className="app-container">
         <div className={`input-container ${showTerminal ? 'moved-up' : ''}`}>
           <h1 className="title">
-            <img src='https://upload.wikimedia.org/wikipedia/commons/9/91/Octicons-mark-github.svg' alt='GitHub Logo' /> 
+            <img src='./github-logo.png' alt='GitHub Logo' /> 
             Clone a 
             <span className={`platform-name transition-opacity duration-500 ${fade ? "opacity-100" : "opacity-0"}`}>
               {platforms[index]}
@@ -173,7 +173,7 @@ function DeployForm() {
       </div>
 
       <footer>
-            Built by <a target='_blank' href="https://github.com/BCHAYMAE" rel="noreferrer">Chaymae BELLAHCENE</a> | <a target='_blank' href="https://github.com/drawliin" rel="noreferrer">Houssam Eddine HAMOUICH</a> 
+            Built by <a target='_blank' href="https://github.com/BCHAYMAE" rel="noreferrer">Chaymae BELLAHCENE</a> || <a target='_blank' href="https://github.com/drawliin" rel="noreferrer">Houssam Eddine HAMOUICH</a>
       </footer>
     </div>
   );
