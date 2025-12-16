@@ -14,19 +14,16 @@ This application automates the process of cloning a repository, detecting its te
 ## 📋 Supported Technologies
 
 ### Frontend
-- ⚛️ React
-- ⚡ React with Vite
-- 🖼️ Vue
+- React with Vite
 
 ### Backend
-- 🟢 Node.js
-- 🐍 Python Flask
+- Node.js
+- Python Flask
 
 ### Database
-- 🐬 MySQL
-- 🐘 PostgreSQL
-- 🍃 MongoDB
-- 🗄️ SQLite
+- MySQL
+- PostgreSQL
+- MongoDB
 
 ## 📦 Prerequisites
 
@@ -44,53 +41,52 @@ Ensure you have the following installed:
     cd deployment_app
     ```
 
-2. **Install Dependencies:**
+2. **Install backend dependencies & start backend**
     ```bash
+    cd backend
     npm install
+    node server.js
+
     ```
 
-3. **Start the Server:**
+3. **Install frontend dependencies & start frontend:**
     ```bash
-    node backend/server.js
+    cd frontend
+    npm install
+    npm run dev
     ```
 
-## 📡 API Endpoints
+## 🎯 Usage
 
-### 🚀 Clone and Deploy Repository
+### 🔹 Deploy a Repository
 
-- **URL:** `/api/clone-repo`
-- **Method:** `POST`
-- **Request Body:**
-    ```json
-    {
-      "repoUrl": "https://github.com/user/repo.git"
-    }
-    ```
-- **Responses:**
-  - ✅ `200 OK` – Deployment successful.
-  - ⚠️ `400 Bad Request` – Repository URL is required.
-  - ❌ `404 Not Found` – Repository not found.
-  - 💥 `500 Internal Server Error` – Error during deployment.
+![Deployment Flow](./images/Capture.PNG)
 
-## 🔄 Workflow
+1. Open the frontend in your browser at http://localhost:5173.
+2. Enter your GitHub repository URL in the input field.
+3. Click the Clone Repo button.
+4. The backend will handle cloning the repository and setting up the deployment.
+5. Replace `https://github.com/your-username/your-repo.git` with your repository URL.
 
-1. **Clone Repository:** The app clones the provided repository into a unique folder.
-2. **Technology Detection:** Automatically identifies frontend, backend, and database technologies.
-3. **Generate Dockerfiles:** Creates tailored Dockerfiles for each service.
-4. **Compose Services:** Builds a `docker-compose.yml` to orchestrate all components.
-5. **Build & Deploy:** Uses Docker Compose to build and deploy the stack.
-6. **Serve Frontend:** Nginx serves the frontend for efficient delivery.
+## 🧪 Test with Sample Projects (these project were created by : (https://github.com/drawliin) )
 
-## ⚠️ Error Handling
+To quickly test the deployment system, use one of these sample repositories:
 
-- 🛑 **400 Bad Request:** Missing repository URL.
-- 🔍 **404 Not Found:** Invalid or non-existent repository.
-- 💣 **500 Internal Server Error:** Issues during cloning or deployment, with detailed error messages.
+1. **React Vite + Node.js + MySQL**  
+   🔗 [Fullstack App With NodeJS and MySQL](https://github.com/drawliin/FullStack-React-Node-MySQL.git)  
+   ```sh
+   https://github.com/drawliin/FullStack-React-Node-MySQL.git
+2. **React Vite + NodeJS + PostgreSQL**  
+   🔗 [FullStack App With Node and PostgreSQL](https://github.com/drawliin/Fullstack-Node-PostgreSQL.git)  
+   ```sh
+   https://github.com/drawliin/Fullstack-Node-PostgreSQL.git
+   
+3. **React CRA + Python Flask + MySQL**  
+   🔗 [FullStack App With React (CRA) and FLASK](https://github.com/drawliin/FullStack-ReactCRA-FLASK.git)  
+   ```sh
+   https://github.com/drawliin/FullStack-ReactCRA-FLASK.git
 
-## 📑 Logs
-
-- Real-time logs are printed to the console for debugging and monitoring.
-
+   
 ## 📄 License
 
 This project is licensed under the **MIT License**.
