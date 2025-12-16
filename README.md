@@ -66,7 +66,7 @@ Ensure you have the following installed:
 4. The backend will handle cloning the repository and setting up the deployment.
 5. Replace `https://github.com/your-username/your-repo.git` with your repository URL.
 
-## 🧪 Test with Sample Projects (these project were created by : https://github.com/drawliin )
+## 🧪 Test with Sample Projects (these projects were created by : https://github.com/drawliin )
 
 To quickly test the deployment system, use one of these sample repositories:
 
