@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { GitBranch, Github } from 'lucide-react'; 
 import './App.css';
@@ -30,26 +30,26 @@ function DeployForm() {
   const [wsMessages, setWsMessages] = useState([]);
   const [showTerminal, setShowTerminal] = useState(false);
   const terminalRef = useRef(null);
+  const activeJobIdRef = useRef(null);
   const [floatingIcons, setFloatingIcons] = useState([]);
   const platforms = ["GitHub", "GitLab", "Bitbucket"];
   const [index, setIndex] = useState(0);
   const [fade, setFade] = useState(true);
 
   useEffect(() => {
-    socket.on('status', (message) => {
-      if (message.includes('Deploying')) {
-        let tempMessages = [...wsMessages];
-        tempMessages[tempMessages.length - 1] = message;
-      } else {
-        setWsMessages((prevMessages) => [...prevMessages, message]);
-        setShowTerminal(true);
-      }
-    });
-
-    return () => {
-      socket.off('status');
+    const handleJobStatus = (status) => {
+      if (status.jobId !== activeJobIdRef.current) return;
+      setWsMessages((messages) => messages.some((message) => (
+        message.message === status.message && message.url === status.url
+      )) ? messages : [...messages, status]);
+      setShowTerminal(true);
     };
-  }, [wsMessages]);
+
+    socket.on('job:status', handleJobStatus);
+    return () => {
+      socket.off('job:status', handleJobStatus);
+    };
+  }, []);
 
   useEffect(() => {
     if (terminalRef.current) {
@@ -89,29 +89,69 @@ function DeployForm() {
     setFloatingIcons(generateFloatingIcons());
   }, []);
 
-  const handleClone = async () => {
-    if (repoUrl) {
-      setDisableInput(true);
-      setWsMessages([]);
-      setShowTerminal(true);
-      try {
-        await fetch('http://localhost:5001/api/clone-repo', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ repoUrl }),
+  const handleClone = async (event) => {
+    event.preventDefault();
+    const normalizedRepoUrl = repoUrl.trim();
+    if (!normalizedRepoUrl || disableInput) return;
+
+    const jobId = window.crypto.randomUUID();
+    activeJobIdRef.current = jobId;
+    setDisableInput(true);
+    setWsMessages([]);
+    setShowTerminal(true);
+
+    try {
+      await new Promise((resolve, reject) => {
+        socket.timeout(5000).emit('join-job', jobId, (error, response) => {
+          if (error) {
+            reject(new Error('Could not connect to deployment status updates. Please try again.'));
+          } else if (!response?.ok) {
+            reject(new Error('Could not subscribe to deployment status updates. Please try again.'));
+          } else {
+            resolve();
+          }
         });
-      } catch (error) {
-        console.log('Error cloning repo:', error);
-        setWsMessages((prev) => [...prev, '🚨 Server Problem.. Try Again']);
-        setDisableInput(false);
+      });
+
+      const response = await fetch('http://localhost:5001/api/clone-repo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoUrl: normalizedRepoUrl, jobId }),
+      });
+      const result = await response.json();
+
+      if (!response.ok || result.status !== 'succeeded') {
+        throw new Error(result.error || 'Deployment failed. Please try again.');
       }
+
+      setWsMessages((messages) => {
+        const successMessage = 'Deployment completed successfully!';
+        const nextMessages = messages.some((message) => message.message === successMessage)
+          ? messages
+          : [...messages, { jobId, message: successMessage, level: 'success' }];
+        return nextMessages.some((message) => message.url === result.deploymentUrl)
+          ? nextMessages
+          : [...nextMessages, {
+            jobId,
+            message: 'View deployed app',
+            level: 'link',
+            url: result.deploymentUrl,
+          }];
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Server problem. Please try again.';
+      setWsMessages((messages) => messages.some((entry) => entry.level === 'error' && entry.message === message)
+        ? messages
+        : [...messages, { jobId, message, level: 'error' }]);
+    } finally {
+      setDisableInput(false);
     }
   };
 
-  const getMessageClass = (msg) => {
-    if (msg.includes('🚨')) {
+  const getMessageClass = (message) => {
+    if (message.level === 'error') {
       return 'error-message';
-    } else if (msg.includes('<a')) {
+    } else if (message.level === 'link') {
       return 'link-message';
     } else {
       return '';
@@ -142,29 +182,30 @@ function DeployForm() {
             </span> Repo
           </h1>
 
-          <div className="input-box">
+          <form className="input-box" onSubmit={handleClone}>
             <input
               type="text"
               placeholder="Enter Git Repo URL"
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
               disabled={disableInput}
+              aria-label="Git repository URL"
             />
-            <button onClick={handleClone} disabled={disableInput}>
+            <button type="submit" disabled={disableInput || !repoUrl.trim()}>
               <GitBranch className="button-icon" />
-              Clone Repo
+              {disableInput ? 'Deploying...' : 'Clone Repo'}
             </button>
-          </div>
+          </form>
         </div>
 
         {showTerminal && (
           <div ref={terminalRef} className={`terminal ${showTerminal ? 'show-terminal' : ''}`}>
-            {wsMessages.map((msg, index) => (
-              <div key={index} className={getMessageClass(msg)}>
-                {msg.includes('<a') ? (
-                  <span dangerouslySetInnerHTML={{ __html: msg }} />
+            {wsMessages.map((message, index) => (
+              <div key={`${message.jobId}-${index}`} className={getMessageClass(message)}>
+                {message.url ? (
+                  <a href={message.url} target="_blank" rel="noreferrer">{message.message}</a>
                 ) : (
-                  msg
+                  message.message
                 )}
               </div>
             ))}

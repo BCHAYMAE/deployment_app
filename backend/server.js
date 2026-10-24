@@ -26,32 +26,22 @@ app.use(express.json());
 
 io.on('connection', (socket) => {
   console.log('Client connected');
+  socket.on('join-job', (jobId, acknowledge) => {
+    if (typeof jobId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(jobId)) {
+      if (typeof acknowledge === 'function') acknowledge({ ok: false });
+      return;
+    }
+
+    socket.join(jobId);
+    if (typeof acknowledge === 'function') acknowledge({ ok: true });
+  });
   socket.on('disconnect', () => {
       console.log('Client disconnected');
   });
 });
 
-// Function to send WebSocket status updates
-const sendStatus = (message) => {
-  io.emit('status', message);
-};
-
-const statusQueue = [];
-let isProcessing = false;
-const processStatusQueue = () => {
-  if (statusQueue.length === 0 || isProcessing) return;
-  isProcessing = true;
-  const { message, delay } = statusQueue.shift();
-  setTimeout(() => {
-    sendStatus(message);
-    isProcessing = false;
-    processStatusQueue();
-  }, delay);
-};
-
-const sendStatusDelayed = (message, delay = 1000) => {
-  statusQueue.push({ message, delay });
-  processStatusQueue();
+const sendJobStatus = (jobId, status) => {
+  io.to(jobId).emit('job:status', { jobId, ...status });
 };
 
 // Initialize simple-git
@@ -713,18 +703,28 @@ const checkNginx = async () => {
 
 // Clone the repository based on the URL provided in the request
 app.post('/api/clone-repo', async (req, res) => {
-  const { repoUrl } = req.body;
+  const { repoUrl, jobId } = req.body || {};
+  const isValidJobId = typeof jobId === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(jobId);
+
+  if (!isValidJobId) {
+    return res.status(400).json({
+      jobId: null,
+      status: 'failed',
+      error: 'A valid job ID is required.',
+    });
+  }
 
   // url validation
-  const validatedUrl = await validateRepositoryUrl(repoUrl);
-  if(!validatedUrl){
-    sendStatus('🚨 Not a valid URL');
-    return;
+  if (typeof repoUrl !== 'string' || !(await validateRepositoryUrl(repoUrl))) {
+    const error = 'Not a valid repository URL.';
+    sendJobStatus(jobId, { message: error, level: 'error' });
+    return res.status(400).json({ jobId, status: 'failed', error });
   }
 
   // Create a unique folder for the new repository
   const clonePath = generateUniqueFolderName(repoUrl);
-  sendStatus('📥 Cloning repository...'); 
+  sendJobStatus(jobId, { message: 'Cloning repository...', level: 'info' });
 
   // Clone the repository
   git.clone(repoUrl, clonePath)
@@ -737,7 +737,7 @@ app.post('/api/clone-repo', async (req, res) => {
           throw new Error("This project does not have a valid full-stack app structure.");
         }
 
-        sendStatusDelayed('✅ Repository cloned successfully!', 1500);
+        sendJobStatus(jobId, { message: 'Repository cloned successfully!', level: 'success' });
 
           // Detect frontend and backend technologies
         const frontendTech = detectFrontendTechnology(clonePath, repoFoldersName);
@@ -757,11 +757,11 @@ app.post('/api/clone-repo', async (req, res) => {
         }
 
         // Create Dockerfiles for frontend, backend and database
-        sendStatusDelayed('⚙️ Creating Dockerfiles...', 2000);
+        sendJobStatus(jobId, { message: 'Creating Dockerfiles...', level: 'info' });
         createFrontendDockerfile(clonePath, frontendTech, repoFoldersName);
         createBackendDockerfile(clonePath, backendTech, repoFoldersName);
         createDatabaseDockerfile(clonePath, databaseTech, repoFoldersName);
-        sendStatusDelayed('✅ Dockerfiles created!', 4000);
+        sendJobStatus(jobId, { message: 'Dockerfiles created!', level: 'success' });
               
   
         // Create dockerignore
@@ -772,9 +772,9 @@ app.post('/api/clone-repo', async (req, res) => {
         
         // Create docker-compose.yml
         createDockerComposeFile(clonePath, frontendTech, backendTech, databaseTech, clonePath, repoFoldersName);
-        sendStatusDelayed('✅ Docker-compose created!', 7000);
+        sendJobStatus(jobId, { message: 'Docker configuration created!', level: 'success' });
         
-        sendStatusDelayed('🚀 Starting Deployment...', 9000);
+        sendJobStatus(jobId, { message: 'Starting deployment...', level: 'info' });
         
         //Automatically build and deploy
         await new Promise((resolve, reject) => {
@@ -812,27 +812,37 @@ app.post('/api/clone-repo', async (req, res) => {
           throw new Error("🚨 Deployment Failed: Nginx did not become ready within the expected time.");
       }
       
-      sendStatus('🚀 Deployment completed successfully!');
+      sendJobStatus(jobId, { message: 'Deployment completed successfully!', level: 'success' });
       console.log('Ready to go');
-      sendStatus(`🔗 <a href='http://localhost:8081' target='_blank'>View Deployed App</a>`);
+      sendJobStatus(jobId, {
+        message: 'View deployed app',
+        level: 'link',
+        url: 'http://localhost:8081',
+      });
+      return res.json({
+        jobId,
+        status: 'succeeded',
+        deploymentUrl: 'http://localhost:8081',
+      });
 
       
       }catch(error) {
         console.error(`Error: ${error.message}`)
         deleteRepo(clonePath);
-        // added this because websocket messages takes times to get sended.. and the exec function got executed before ws send messages.. which leads to the appearance of messages after Errors
-        sendStatusDelayed(`🚨 Error: ${error.message}`, 8500);
+        const message = error.message;
+        sendJobStatus(jobId, { message, level: 'error' });
+        return res.status(500).json({ jobId, status: 'failed', error: message });
       
       }
     })
     .catch((err) => {
       console.error('Error cloning repo:', err);
-      if(err.message.includes('Repository not found')){
-        sendStatus(`🚨 Repository not found! Please check the repo URL.`);
-      }else{
-        sendStatus(`🚨 Error Cloning Repository`);
-
-      }
+      deleteRepo(clonePath);
+      const message = err.message.includes('Repository not found')
+        ? 'Repository not found. Please check the repository URL.'
+        : `Error cloning repository: ${err.message}`;
+      sendJobStatus(jobId, { message, level: 'error' });
+      return res.status(500).json({ jobId, status: 'failed', error: message });
     });
 });
 
