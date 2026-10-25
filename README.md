@@ -33,6 +33,19 @@ Ensure you have the following installed:
 - [Docker](https://www.docker.com/)
 - [Docker Compose](https://docs.docker.com/compose/)
 
+## 🔒 Security boundary
+
+The backend is intended for **single-user local development only**. It binds to
+the loopback interface, accepts browser requests only from the local Vite
+origins on ports 5173–5175, limits request bodies to 8 KB, allows at most five
+deployment requests per minute, and runs one deployment at a time.
+
+This is not user authentication: processes running as your operating-system
+user can still access the local service. Do not expose port 5001 to a LAN or the
+internet, use port forwarding, or change the backend to listen on `0.0.0.0`.
+The service builds and runs code from submitted repositories, so it is not
+suitable for multi-user or untrusted public use.
+
 ## ⚙️ Installation
 
 1. **Clone the Repository:**
@@ -88,4 +101,3 @@ To quickly test the deployment system, use one of these sample repositories:
 ## 📄 License
 
 This project is licensed under the **MIT License**.
-
