@@ -30,21 +30,60 @@ This application automates the process of cloning a repository, detecting its te
 Ensure you have the following installed:
 
 - [Node.js](https://nodejs.org/)
-- [Docker](https://www.docker.com/)
-- [Docker Compose](https://docs.docker.com/compose/)
+- [Docker CLI with Compose v2](https://docs.docker.com/compose/)
+- Git CLI
+- SSH access from the API host to the provisioned worker
 
-## 🔒 Security boundary
+## 🔒 Security boundary and worker setup
 
-The backend is intended for **single-user local development only**. It binds to
-the loopback interface, accepts browser requests only from the local Vite
-origins on ports 5173–5175, limits request bodies to 8 KB, allows at most five
-deployment requests per minute, and runs one deployment at a time.
+Repositories are untrusted code. Dependency installation can run package
+scripts, Docker builds execute repository-controlled instructions, and the
+application containers run repository code. Deployments are disabled unless a
+separate worker is configured. Never point the worker setting at the machine
+running this API.
 
-This is not user authentication: processes running as your operating-system
-user can still access the local service. Do not expose port 5001 to a LAN or the
-internet, use port forwarding, or change the backend to listen on `0.0.0.0`.
-The service builds and runs code from submitted repositories, so it is not
-suitable for multi-user or untrusted public use.
+Provision a **dedicated disposable VM with a rootless Docker Engine**, cgroup v2
+limits, a quota-limited filesystem, and firewall rules before enabling jobs.
+The VM should allow SSH only from the API host and allow deployment traffic only
+from its reverse proxy. Restrict outbound traffic at the VM firewall to the
+registries needed for image and package downloads. Do not expose the Docker
+daemon over an unauthenticated TCP socket. The VM must have enough disk for
+image layers and persistent deployment volumes; establish a cleanup/retention
+policy for those resources.
+
+Configure the API host with:
+
+```bash
+export DEPLOYMENT_WORKER_DOCKER_HOST=ssh://deploy@worker.example.net
+export DEPLOYMENT_PUBLIC_BASE_URL=https://apps.example.net
+export DEPLOYMENT_WORKSPACE=/srv/deployment-workspace
+```
+
+`DEPLOYMENT_WORKSPACE` must be a quota-backed absolute path on the API host.
+Mount that same directory at the **same absolute path** on the worker: generated
+Compose configuration uses bind mounts for the Nginx config, frontend output,
+and database initialization files. The backend shallow-clones repositories
+there, accepts only HTTPS URLs whose exact host is `github.com`, `gitlab.com`,
+or `bitbucket.org`, enforces 1 GB and 100,000-file checkout limits, and applies
+a two-minute clone timeout. The Docker Compose build and run command has a
+ten-minute timeout. Compose is invoked with only the generated file (not
+repository overrides), and does not load the cloned `.env` file.
+
+Each generated runtime service is limited to 1 CPU, 512 MB memory, and 128
+processes; application containers share an internal network with no outbound
+route, and database ports are not published. The worker VM's CPU, memory,
+process, disk, and egress limits are still essential: Compose runtime limits do
+not constrain Docker image builds, and the checkout size check runs after
+cloning. Enforce hard CPU, memory, process, disk-quota, and outbound-firewall
+limits on the worker and quota the shared workspace before enabling deployments.
+
+The worker reverse proxy should route the HTTPS public URL to
+`127.0.0.1:8081` on the worker. Successful deployments persist on the worker;
+remove old Compose projects and volumes according to your retention policy.
+The backend API itself still binds to loopback and is **not authenticated**.
+Do not expose port 5001 to a LAN or the internet, use port forwarding, or change
+the backend to listen on `0.0.0.0`. This app is not ready for multi-user or
+public service exposure without adding authentication and authorization.
 
 ## ⚙️ Installation
 

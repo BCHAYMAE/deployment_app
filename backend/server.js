@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const simpleGit = require('simple-git');
 const fs = require('fs');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 const http = require('http'); 
 const { Server } = require('socket.io'); // Import socket.io
@@ -20,6 +20,11 @@ const activeDeploymentJobs = new Set();
 const deploymentRateLimits = new Map();
 const deploymentRateWindowMs = 60_000;
 const maxDeploymentsPerWindow = 5;
+const maxRepositorySizeBytes = 1024 * 1024 * 1024;
+const maxRepositoryFiles = 100_000;
+const cloneTimeoutMs = 2 * 60 * 1000;
+const deploymentTimeoutMs = 10 * 60 * 1000;
+const allowedRepositoryHosts = new Set(['github.com', 'gitlab.com', 'bitbucket.org']);
 
 const server = http.createServer(app); // Create HTTP server
 const io = new Server(server, {
@@ -97,61 +102,125 @@ const sendJobStatus = (jobId, status) => {
 };
 
 // Initialize simple-git
-const git = simpleGit();
+const git = simpleGit({ timeout: { block: cloneTimeoutMs } });
 
 // Function to create a unique folder for each cloned repo
-const generateUniqueFolderName = (repoUrl) => {
-  const repoName = repoUrl.split('/').pop().replace('.git', '');
+const generateUniqueFolderName = (repoUrl, workspace) => {
+  const repository = new URL(repoUrl);
+  const repoName = path.basename(repository.pathname).replace(/\.git$/, '');
   const timestamp = Date.now();
-  const uniqueName = `${repoName}-${timestamp}`;
-  return path.join(__dirname, 'cloned-repos', uniqueName);
+  return path.join(workspace, `${repoName}-${timestamp}`);
 };
 
-// CHECK URL VALIDATION
 const validateRepositoryUrl = async (repoUrl) => {
-  const ALLOWED_DOMAINS = ['github.com', 'gitlab.com', 'bitbucket.org'];
+  if (typeof repoUrl !== 'string' || repoUrl.length > 2048) return false;
 
-  // Validate URL format
-  const isValidGitUrl = (url) => {
-    const gitUrlPattern = /^(https?:\/\/)?([\w.-]+)\.([a-z]{2,})(\/[\w.-]+)*\/?(\/)?(\.git)?$/i;
-    return gitUrlPattern.test(url);
+  let repository;
+  try {
+    repository = new URL(repoUrl);
+  } catch {
+    return false;
+  }
+
+  const repositoryPathSegments = repository.pathname.split('/').filter(Boolean);
+  const hasValidRepositoryPath = repositoryPathSegments.length >= 2
+    && repositoryPathSegments.every((segment) => (
+      segment !== '.'
+      && segment !== '..'
+      && /^[A-Za-z0-9_.-]+$/.test(segment)
+    ))
+    && repositoryPathSegments.at(-1) !== '.git';
+
+  return repository.protocol === 'https:'
+    && allowedRepositoryHosts.has(repository.hostname)
+    && !repository.port
+    && !repository.username
+    && !repository.password
+    && !repository.search
+    && !repository.hash
+    && hasValidRepositoryPath;
+};
+
+const getWorkerConfiguration = () => {
+  const dockerHost = process.env.DEPLOYMENT_WORKER_DOCKER_HOST;
+  const publicBaseUrl = process.env.DEPLOYMENT_PUBLIC_BASE_URL;
+  const workspace = process.env.DEPLOYMENT_WORKSPACE;
+
+  if (!dockerHost || !publicBaseUrl || !workspace || !path.isAbsolute(workspace)) {
+    return null;
+  }
+  const resolvedWorkspace = path.resolve(workspace);
+  const isWithinPath = (parent, candidate) => {
+    const relativePath = path.relative(parent, candidate);
+    return relativePath === ''
+      || (!relativePath.startsWith(`..${path.sep}`)
+        && relativePath !== '..'
+        && !path.isAbsolute(relativePath));
   };
 
-  // Check if the domain is allowed
-  const isValidDomain = (url) => {
-    try {
-      const { hostname } = new URL(url);
-      return ALLOWED_DOMAINS.some(domain => hostname.endsWith(domain));
-    } catch (error) {
-      return false; // Invalid URL format
+  if (resolvedWorkspace === path.parse(resolvedWorkspace).root
+    || isWithinPath(__dirname, resolvedWorkspace)
+    || isWithinPath(resolvedWorkspace, __dirname)) {
+    return null;
+  }
+
+  let worker;
+  let publicUrl;
+  try {
+    worker = new URL(dockerHost);
+    publicUrl = new URL(publicBaseUrl);
+  } catch {
+    return null;
+  }
+
+  if (worker.protocol !== 'ssh:'
+    || !worker.hostname
+    || !worker.username
+    || worker.pathname !== '/'
+    || worker.password
+    || worker.search
+    || worker.hash
+    || ['localhost', '127.0.0.1', '::1'].includes(worker.hostname)
+    || publicUrl.protocol !== 'https:'
+    || !publicUrl.hostname
+    || publicUrl.username
+    || publicUrl.password
+    || publicUrl.search
+    || publicUrl.hash) {
+    return null;
+  }
+
+  return {
+    dockerHost,
+    publicBaseUrl: publicUrl.toString().replace(/\/$/, ''),
+    workspace: resolvedWorkspace,
+  };
+};
+
+const getRepositorySize = async (directory) => {
+  let totalBytes = 0;
+  let fileCount = 0;
+  const pending = [directory];
+
+  while (pending.length > 0) {
+    const currentPath = pending.pop();
+    const directoryHandle = await fs.promises.opendir(currentPath);
+    for await (const entry of directoryHandle) {
+      const entryPath = path.join(currentPath, entry.name);
+      const details = await fs.promises.lstat(entryPath);
+      if (details.isDirectory()) {
+        pending.push(entryPath);
+      } else if (details.isFile()) {
+        fileCount += 1;
+        totalBytes += details.size;
+        if (totalBytes > maxRepositorySizeBytes || fileCount > maxRepositoryFiles) {
+          return { totalBytes, fileCount };
+        }
+      }
     }
-  };
-
-  // Prevent SSRF
-  const isSafeUrl = (url) => {
-    try {
-      const { hostname } = new URL(url);
-      const isPrivateIP = /^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)/.test(hostname);
-      const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
-      return !isPrivateIP && !isLocalhost;
-    } catch (error) {
-      return false; // Invalid URL format
-    }
-  };
-
-  // Perform all checks
-  if (!isValidGitUrl(repoUrl)) {
-    return false;
   }
 
-  if (!isValidDomain(repoUrl)) {
-    return false;
-  }
-
-  if (!isSafeUrl(repoUrl)) {
-    return false;
-  }
-  return true;
+  return { totalBytes, fileCount };
 };
 
 // Function to check if the cloned repo has the full-stack app structure and retrieves the folders name
@@ -346,6 +415,13 @@ const createBackendDockerfile = (repoPath, backendTech, folderName) => {
   switch (backendTech) {
     case 'nodejs': {
       const packageJson = require(path.join(repoPath, folderName.backend, 'package.json'));
+      const mainFile = packageJson.main || 'index.js';
+      if (typeof mainFile !== 'string'
+        || path.posix.isAbsolute(mainFile)
+        || mainFile.split(/[\\/]/).includes('..')
+        || !/^[A-Za-z0-9_./-]+$/.test(mainFile)) {
+        throw new Error('Node.js package.json contains an unsupported main entry path.');
+      }
       dockerfile = `
         # Dockerfile for Node.js backend
         FROM node:alpine
@@ -353,7 +429,7 @@ const createBackendDockerfile = (repoPath, backendTech, folderName) => {
         COPY package*.json ./
         RUN npm install
         COPY ./ ./
-        CMD ["node", "${packageJson.main}"]
+        CMD ${JSON.stringify(['node', mainFile])}
       `;
       break;
     }
@@ -363,12 +439,15 @@ const createBackendDockerfile = (repoPath, backendTech, folderName) => {
       if (!pythonEntryFile || pythonEntryFile.length === 0) {
         throw new Error('No valid Python entry file found.');
       }
+      if (!/^[A-Za-z0-9_.-]+\.py$/.test(pythonEntryFile[0])) {
+        throw new Error('Python entry file name contains unsupported characters.');
+      }
       dockerfile = `
         FROM python:latest
         WORKDIR /app
         COPY ./ ./
         RUN pip install --no-cache-dir -r ./requirements.txt
-        CMD ["python", "${pythonEntryFile[0]}"]
+        CMD ${JSON.stringify(['python', pythonEntryFile[0]])}
       `;
       break;
     }
@@ -510,11 +589,10 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
   let backendService = '';
   let databaseService = '';
 
-  const networkName = `repo-network-${Math.floor(Math.random() * 1000)}`;
-
   if (frontendPath) {
     frontendService = `
       frontend:
+        <<: *runtime-limits
         build:
           context: ./${folderName.frontend}
           dockerfile: Dockerfile
@@ -531,11 +609,10 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
     case "nodejs-mysql":
       backendService = `
         backend:
+          <<: *runtime-limits
           build:
             context: ./${folderName.backend}
             dockerfile: Dockerfile
-          ports:
-            - "4002:4002"  
           depends_on:
             db:
               condition: service_healthy
@@ -548,17 +625,16 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
       `;
       databaseService = `
         db:
+          <<: *runtime-limits
           build:
             context: ./${folderName.database}
             dockerfile: Dockerfile
           environment:
             MYSQL_ROOT_PASSWORD: root
             MYSQL_DATABASE: mydb
-          ports:
-            - "3307:3307"
           volumes:
             - ${folderNameNetwork}-data:/var/lib/mysql
-            - ./${folderName.database}/init:/docker-entrypoint-initdb.d
+            - ./${folderName.database}/init:/docker-entrypoint-initdb.d:ro
           healthcheck:
             test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
             interval: 10s
@@ -569,11 +645,10 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
     case 'nodejs-mongodb':
       backendService = `
         backend:
+          <<: *runtime-limits
           build:
             context: ./${folderName.backend}
             dockerfile: Dockerfile
-          ports:
-            - "4002:4002"  
           depends_on:
            - db
           environment:
@@ -582,25 +657,23 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
       `;
       databaseService = `
         db:
+          <<: *runtime-limits
           build:
             context: ./${folderName.database}
             dockerfile: Dockerfile
 
-          ports:
-            - "27017:27017"
           volumes:
             - ${folderNameNetwork}-data:/data/db
-            - ./${folderName.database}/init:/docker-entrypoint-initdb.d
+            - ./${folderName.database}/init:/docker-entrypoint-initdb.d:ro
       `;
       break;
     case "nodejs-postgres":
       backendService = `
         backend:
+          <<: *runtime-limits
           build:
             context: ./${folderName.backend}
             dockerfile: Dockerfile
-          ports:
-            - "4002:4002"  
           depends_on:
             db:
               condition: service_healthy
@@ -614,19 +687,18 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
       `;
       databaseService = `
         db:
+          <<: *runtime-limits
           build:
             context: ./${folderName.database}
             dockerfile: Dockerfile
 
-          ports:
-            - "5432:5432"
           environment:
             POSTGRES_USER: postgres
             POSTGRES_PASSWORD: postgres
             POSTGRES_DB: mydb
           volumes:
             - ${folderNameNetwork}-data:/var/lib/postgresql/data
-            - ./${folderName.database}/init:/docker-entrypoint-initdb.d
+            - ./${folderName.database}/init:/docker-entrypoint-initdb.d:ro
           healthcheck:
             test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
             interval: 10s
@@ -637,11 +709,10 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
     case 'python-flask-mysql':
       backendService=`
         backend:
+          <<: *runtime-limits
           build:
             context: ./${folderName.backend}
             dockerfile: Dockerfile
-          ports:
-            - "4002:4002"
           command: ["gunicorn", "-b", ":4002", "app:app"]
           depends_on:
             db:
@@ -655,17 +726,16 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
       `;
       databaseService=`
         db:
+          <<: *runtime-limits
           build:
             context: ./${folderName.database}
             dockerfile: Dockerfile
           environment:
             MYSQL_ROOT_PASSWORD: root
             MYSQL_DATABASE: mydb
-          ports:
-            - "3307:3307"
           volumes:
             - ${folderNameNetwork}-data:/var/lib/mysql
-            - ./${folderName.database}/init:/docker-entrypoint-initdb.d
+            - ./${folderName.database}/init:/docker-entrypoint-initdb.d:ro
           healthcheck:
             test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
             interval: 10s
@@ -676,11 +746,10 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
     case "python-flask-mongodb": 
       backendService = `
         backend:
+            <<: *runtime-limits
             build:
               context: ./${folderName.backend}
               dockerfile: Dockerfile
-            ports:
-              - "4002:4002"
             command: ["gunicorn", "-b", ":4002", "app:app"]
             depends_on:
               - db
@@ -690,15 +759,14 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
       `;
       databaseService = `
         db:
+          <<: *runtime-limits
           build:
             context: ./${folderName.database}
             dockerfile: Dockerfile
 
-          ports:
-            - "27017:27017"
           volumes:
             - ${folderNameNetwork}-data:/data/db
-            - ./${folderName.database}/init:/docker-entrypoint-initdb.d
+            - ./${folderName.database}/init:/docker-entrypoint-initdb.d:ro
       `;
       break;
     default:
@@ -708,27 +776,37 @@ const createDockerComposeFile = (repoPath, frontendTech, backendTech, databaseTy
 
 
   const dockerCompose = `
-    services:
-      ${frontendService.trim()}${frontendService ? '\n' : ''}
-      ${backendService.trim()}${backendService ? '\n' : ''}
-      ${databaseService.trim()}${databaseService ? '\n' : ''}
+    x-runtime-limits: &runtime-limits
+      deploy:
+        resources:
+          limits:
+            cpus: "1.0"
+            memory: 512M
+            pids: 128
 
-      nginx:
+services:
+  ${frontendService.trim()}${frontendService ? '\n' : ''}
+  ${backendService.trim()}${backendService ? '\n' : ''}
+  ${databaseService.trim()}${databaseService ? '\n' : ''}
+
+  nginx:
+        <<: *runtime-limits
         image: nginx:alpine
         volumes:
           - ./nginx.conf:/etc/nginx/nginx.conf:ro
-          - ./${folderName.frontend}/${frontendPath}:/usr/share/nginx/html  # Serve frontend files (Ensure frontendPath is correct)
+          - ./${folderName.frontend}/${frontendPath}:/usr/share/nginx/html:ro
           
         ports:
-          - "8081:80"
+          - "127.0.0.1:8081:80"
         depends_on:
           - backend
           ${frontendPath ? "- frontend" : ""}
           - db
 
 networks:
-  ${networkName}:
+  default:
     driver: bridge
+    internal: true
 
 volumes:
   ${folderNameNetwork}-data:
@@ -739,21 +817,67 @@ volumes:
   fs.writeFileSync(dockerComposeFilePath, dockerCompose.trim());  // Write to the final path
 };
 
-// Function to check nginx is serving
-const checkNginx = async () => {
-  try {
-    const response = await fetch(`http://localhost:8081`); // Checking the deployed frontend
-    if (response.status === 200) {
-      return true; // Nginx is ready
+const runDockerCommand = (dockerHost, args, timeoutMs) => new Promise((resolve, reject) => {
+  const child = spawn('docker', ['--host', dockerHost, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  let timedOut = false;
+  let forceKillTimer;
+
+  const appendTail = (current, chunk) => `${current}${chunk}`.slice(-16_384);
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    child.kill('SIGTERM');
+    forceKillTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+  }, timeoutMs);
+
+  child.stdout.on('data', (chunk) => {
+    stdout = appendTail(stdout, chunk.toString());
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr = appendTail(stderr, chunk.toString());
+  });
+  child.on('error', (error) => {
+    clearTimeout(timeout);
+    clearTimeout(forceKillTimer);
+    reject(error);
+  });
+  child.on('close', (code) => {
+    clearTimeout(timeout);
+    clearTimeout(forceKillTimer);
+    if (timedOut) {
+      reject(new Error(`Docker worker command exceeded the ${Math.round(timeoutMs / 1000)} second time limit.`));
+    } else if (code !== 0) {
+      reject(new Error(stderr.trim() || `Docker worker command exited with code ${code}.`));
+    } else {
+      resolve(stdout.trim());
     }
-    return false; // Nginx is not ready
+  });
+});
+
+const runDockerCompose = (worker, clonePath, jobId, args, timeoutMs) => runDockerCommand(
+  worker.dockerHost,
+  [
+    'compose',
+    '--project-directory', clonePath,
+    '--env-file', '/dev/null',
+    '--project-name', `deploy-${jobId.replaceAll('-', '')}`,
+    '--file', path.join(clonePath, 'docker-compose.yml'),
+    ...args,
+  ],
+  timeoutMs,
+);
+
+const checkNginx = async (deploymentUrl) => {
+  try {
+    const response = await fetch(deploymentUrl, { signal: AbortSignal.timeout(5000) });
+    return response.status === 200;
   } catch (error) {
     console.error('Error checking Nginx:', error.message);
-    return false; // Nginx is not ready
+    return false;
   }
 };
 
-// Clone the repository based on the URL provided in the request
 app.post('/api/clone-repo', async (req, res) => {
   const { repoUrl, jobId } = req.body || {};
   const isValidJobId = typeof jobId === 'string' && jobIdPattern.test(jobId);
@@ -766,9 +890,15 @@ app.post('/api/clone-repo', async (req, res) => {
     });
   }
 
-  // url validation
+  const worker = getWorkerConfiguration();
+  if (!worker) {
+    const error = 'Secure deployment worker is not configured. See the README security setup.';
+    sendJobStatus(jobId, { message: error, level: 'error' });
+    return res.status(503).json({ jobId, status: 'failed', error });
+  }
+
   if (typeof repoUrl !== 'string' || !(await validateRepositoryUrl(repoUrl))) {
-    const error = 'Not a valid repository URL.';
+    const error = 'Repository URL must be HTTPS on github.com, gitlab.com, or bitbucket.org.';
     sendJobStatus(jobId, { message: error, level: 'error' });
     return res.status(400).json({ jobId, status: 'failed', error });
   }
@@ -780,133 +910,103 @@ app.post('/api/clone-repo', async (req, res) => {
   }
 
   activeDeploymentJobs.add(jobId);
+  let clonePath;
+  let composeWasStarted = false;
 
-  // Create a unique folder for the new repository
-  const clonePath = generateUniqueFolderName(repoUrl);
-  sendJobStatus(jobId, { message: 'Cloning repository...', level: 'info' });
+  try {
+    const workerInfo = await runDockerCommand(
+      worker.dockerHost,
+      ['info', '--format', '{{json .SecurityOptions}}|{{.CgroupVersion}}'],
+      15_000,
+    );
+    const [securityOptions, cgroupVersion] = workerInfo.split('|');
+    if (!securityOptions?.toLowerCase().includes('rootless') || cgroupVersion !== '2') {
+      throw new Error('Deployment worker must use rootless Docker with cgroup v2.');
+    }
 
-  // Clone the repository
-  Promise.resolve()
-    .then(() => git.clone(repoUrl, clonePath))
-    .then(async() => {         
-      
-      try {
+    fs.mkdirSync(worker.workspace, { recursive: true });
+    clonePath = generateUniqueFolderName(repoUrl, worker.workspace);
+    sendJobStatus(jobId, { message: 'Cloning repository...', level: 'info' });
+    await git.clone(repoUrl, clonePath, ['--depth=1']);
 
-        const repoFoldersName = isFullStackApp(clonePath)
-        if (!repoFoldersName) {
-          throw new Error("This project does not have a valid full-stack app structure.");
-        }
+    const repositorySize = await getRepositorySize(clonePath);
+    if (repositorySize.totalBytes > maxRepositorySizeBytes
+      || repositorySize.fileCount > maxRepositoryFiles) {
+      throw new Error('Repository exceeds the checkout limits of 1 GB or 100,000 files.');
+    }
 
-        sendJobStatus(jobId, { message: 'Repository cloned successfully!', level: 'success' });
+    const repoFoldersName = isFullStackApp(clonePath);
+    if (!repoFoldersName) {
+      throw new Error('This project does not have a valid full-stack app structure.');
+    }
 
-          // Detect frontend and backend technologies
-        const frontendTech = detectFrontendTechnology(clonePath, repoFoldersName);
-        const backendTech = detectBackendTechnology(clonePath, repoFoldersName);
-        const databaseTech = detectDatabase(clonePath, backendTech, repoFoldersName);
+    sendJobStatus(jobId, { message: 'Repository cloned. Detecting technologies...', level: 'info' });
+    const frontendTech = detectFrontendTechnology(clonePath, repoFoldersName);
+    const backendTech = detectBackendTechnology(clonePath, repoFoldersName);
+    const databaseTech = detectDatabase(clonePath, backendTech, repoFoldersName);
 
-        console.log(frontendTech, backendTech, databaseTech);
+    if (frontendTech === 'unknown' || backendTech === 'unknown' || databaseTech === 'unknown') {
+      throw new Error('Could not detect a supported frontend, backend, and database combination.');
+    }
 
-        if(frontendTech === 'unknown'){
-          throw new Error('Frontend technology not detected. Deployment cannot proceed.')
-        }
-        if(backendTech === 'unknown'){
-          throw new Error('Backend technology not detected. Deployment cannot proceed.')
-        }
-        if(databaseTech === 'unknown'){
-          throw new Error('Database technology not detected. Deployment cannot proceed.')
-        }
+    sendJobStatus(jobId, { message: 'Creating isolated deployment configuration...', level: 'info' });
+    createFrontendDockerfile(clonePath, frontendTech, repoFoldersName);
+    createBackendDockerfile(clonePath, backendTech, repoFoldersName);
+    createDatabaseDockerfile(clonePath, databaseTech, repoFoldersName);
+    createDockerignore(clonePath);
+    createNginxConfig(clonePath);
+    createDockerComposeFile(clonePath, frontendTech, backendTech, databaseTech, clonePath, repoFoldersName);
 
-        // Create Dockerfiles for frontend, backend and database
-        sendJobStatus(jobId, { message: 'Creating Dockerfiles...', level: 'info' });
-        createFrontendDockerfile(clonePath, frontendTech, repoFoldersName);
-        createBackendDockerfile(clonePath, backendTech, repoFoldersName);
-        createDatabaseDockerfile(clonePath, databaseTech, repoFoldersName);
-        sendJobStatus(jobId, { message: 'Dockerfiles created!', level: 'success' });
-              
-  
-        // Create dockerignore
-        createDockerignore(clonePath);
+    sendJobStatus(jobId, { message: 'Building and deploying on the isolated worker...', level: 'info' });
+    composeWasStarted = true;
+    await runDockerCompose(worker, clonePath, jobId, ['up', '--build', '--detach'], deploymentTimeoutMs);
 
-        //create nginx.conf
-        createNginxConfig(clonePath);
-        
-        // Create docker-compose.yml
-        createDockerComposeFile(clonePath, frontendTech, backendTech, databaseTech, clonePath, repoFoldersName);
-        sendJobStatus(jobId, { message: 'Docker configuration created!', level: 'success' });
-        
-        sendJobStatus(jobId, { message: 'Starting deployment...', level: 'info' });
-        
-        //Automatically build and deploy
-        await new Promise((resolve, reject) => {
-          exec(`cd ${clonePath} && docker-compose up --build -d`, (err, stdout, stderr) => {
-              if (err) {
-                  console.log("Deployment Error:", stderr);
-                  if (stderr.includes("port is already allocated")) {
-                      reject(new Error("Deployment Failed: Port Conflict. Another service is using the required port."));
-                  } else if (stderr.includes("error during connect")) {
-                      reject(new Error("Docker Desktop is not running. Please start Docker and try again."));
-                  } else if (stderr.includes("exec: \"gunicorn\": executable file not found in $PATH")) {
-                      reject(new Error("Deployment Failed: Gunicorn is not installed. Please ensure Gunicorn is added to your application dependencies."));
-                  } else {
-                      reject(new Error(`Error deploying application: ${stderr}`));
-                  }
-              } else {
-                  console.log("Deployment Success:", stdout);
-                  resolve();
-              }
-          });
-        });
+    const deploymentUrl = `${worker.publicBaseUrl}/`;
+    let retries = 50;
+    let nginxReady = false;
+    while (retries > 0 && !nginxReady) {
+      nginxReady = await checkNginx(deploymentUrl);
+      if (nginxReady) break;
+      retries--;
+      await new Promise(resolve => setTimeout(resolve, 4000));
+    }
 
-      // Check if Nginx is ready
-      let retries = 50;
-      let nginxReady = false;
-      while (retries > 0 && !nginxReady) {
-          nginxReady = await checkNginx();
-          if (nginxReady) break;
-          retries--;
-          console.log('Waiting for Nginx to be ready...');
-          await new Promise(resolve => setTimeout(resolve, 4000)); // Wait for 4 seconds
-      }
+    if (!nginxReady) {
+      throw new Error('Deployment failed: the public deployment URL did not become ready.');
+    }
 
-      if (!nginxReady) {
-          throw new Error("🚨 Deployment Failed: Nginx did not become ready within the expected time.");
-      }
-      
-      sendJobStatus(jobId, { message: 'Deployment completed successfully!', level: 'success' });
-      console.log('Ready to go');
-      sendJobStatus(jobId, {
-        message: 'View deployed app',
-        level: 'link',
-        url: 'http://localhost:8081',
-      });
-      activeDeploymentJobs.delete(jobId);
-      return res.json({
-        jobId,
-        status: 'succeeded',
-        deploymentUrl: 'http://localhost:8081',
-      });
-
-      
-      }catch(error) {
-        console.error(`Error: ${error.message}`)
-        deleteRepo(clonePath);
-        const message = error.message;
-        sendJobStatus(jobId, { message, level: 'error' });
-        activeDeploymentJobs.delete(jobId);
-        return res.status(500).json({ jobId, status: 'failed', error: message });
-      
-      }
-    })
-    .catch((err) => {
-      console.error('Error cloning repo:', err);
-      deleteRepo(clonePath);
-      activeDeploymentJobs.delete(jobId);
-      const message = err.message.includes('Repository not found')
-        ? 'Repository not found. Please check the repository URL.'
-        : `Error cloning repository: ${err.message}`;
-      sendJobStatus(jobId, { message, level: 'error' });
-      return res.status(500).json({ jobId, status: 'failed', error: message });
+    sendJobStatus(jobId, { message: 'Deployment completed successfully!', level: 'success' });
+    sendJobStatus(jobId, {
+      message: 'View deployed app',
+      level: 'link',
+      url: deploymentUrl,
     });
+    return res.json({ jobId, status: 'succeeded', deploymentUrl });
+  } catch (error) {
+    console.error(`Deployment job ${jobId} failed:`, error);
+    if (composeWasStarted && clonePath) {
+      try {
+        await runDockerCompose(
+          worker,
+          clonePath,
+          jobId,
+          ['down', '--volumes', '--remove-orphans'],
+          60_000,
+        );
+      } catch (cleanupError) {
+        console.error(`Could not clean up worker deployment ${jobId}:`, cleanupError);
+      }
+    }
+    if (clonePath) deleteRepo(clonePath);
+
+    const message = error.message.includes('Repository not found')
+      ? 'Repository not found. Please check the repository URL.'
+      : error.message;
+    sendJobStatus(jobId, { message, level: 'error' });
+    return res.status(500).json({ jobId, status: 'failed', error: message });
+  } finally {
+    activeDeploymentJobs.delete(jobId);
+  }
 });
 
 app.use((error, req, res, next) => {
