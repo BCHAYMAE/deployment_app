@@ -10,24 +10,76 @@ const { Server } = require('socket.io'); // Import socket.io
 
 const app = express();
 const port = 5001;
+const frontendOrigins = new Set([
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+]);
+const jobIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const activeDeploymentJobs = new Set();
+const deploymentRateLimits = new Map();
+const deploymentRateWindowMs = 60_000;
+const maxDeploymentsPerWindow = 5;
 
 const server = http.createServer(app); // Create HTTP server
 const io = new Server(server, {
     cors: {
-        origin: ["http://localhost:5174", "http://localhost:5173", "http://localhost:5175"], 
+        origin: [...frontendOrigins],
         methods: ["GET", "POST"]
-    }
+    },
+    maxHttpBufferSize: 16 * 1024,
+    allowRequest: (request, callback) => {
+      const origin = request.headers.origin;
+      const host = request.headers.host?.toLowerCase();
+      const isLocalHost = ['localhost:5001', '127.0.0.1:5001'].includes(host);
+      const isLoopbackAddress = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(request.socket.remoteAddress);
+      callback(null, isLocalHost && isLoopbackAddress && (!origin || frontendOrigins.has(origin)));
+    },
 });
 
-// Enable CORS
-app.use(cors());
-app.use(express.json());
+app.use((req, res, next) => {
+  const isLocalHost = ['localhost', '127.0.0.1'].includes(req.hostname);
+  const isLoopbackAddress = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+  const origin = req.get('origin');
+
+  if (!isLocalHost || !isLoopbackAddress || (origin && !frontendOrigins.has(origin))) {
+    return res.status(403).json({
+      status: 'failed',
+      error: 'This deployment service only accepts requests from its local frontend.',
+    });
+  }
+
+  return next();
+});
+app.use(cors({ origin: [...frontendOrigins], methods: ['GET', 'POST'] }));
+app.use(express.json({ limit: '8kb' }));
+
+app.use('/api/clone-repo', (req, res, next) => {
+  const clientAddress = req.socket.remoteAddress;
+  const now = Date.now();
+  const currentLimit = deploymentRateLimits.get(clientAddress);
+  const requestLimit = !currentLimit || now - currentLimit.startedAt >= deploymentRateWindowMs
+    ? { startedAt: now, count: 0 }
+    : currentLimit;
+
+  if (requestLimit.count >= maxDeploymentsPerWindow) {
+    return res.status(429).json({
+      jobId: req.body?.jobId || null,
+      status: 'failed',
+      error: 'Too many deployment requests. Please wait a minute and try again.',
+    });
+  }
+
+  requestLimit.count += 1;
+  deploymentRateLimits.set(clientAddress, requestLimit);
+  return next();
+});
 
 
 io.on('connection', (socket) => {
   console.log('Client connected');
   socket.on('join-job', (jobId, acknowledge) => {
-    if (typeof jobId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(jobId)) {
+    if (typeof jobId !== 'string' || !jobIdPattern.test(jobId)) {
       if (typeof acknowledge === 'function') acknowledge({ ok: false });
       return;
     }
@@ -704,8 +756,7 @@ const checkNginx = async () => {
 // Clone the repository based on the URL provided in the request
 app.post('/api/clone-repo', async (req, res) => {
   const { repoUrl, jobId } = req.body || {};
-  const isValidJobId = typeof jobId === 'string'
-    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(jobId);
+  const isValidJobId = typeof jobId === 'string' && jobIdPattern.test(jobId);
 
   if (!isValidJobId) {
     return res.status(400).json({
@@ -722,12 +773,21 @@ app.post('/api/clone-repo', async (req, res) => {
     return res.status(400).json({ jobId, status: 'failed', error });
   }
 
+  if (activeDeploymentJobs.size > 0 || activeDeploymentJobs.has(jobId)) {
+    const error = 'Another deployment is already running. Please try again when it finishes.';
+    sendJobStatus(jobId, { message: error, level: 'error' });
+    return res.status(429).json({ jobId, status: 'failed', error });
+  }
+
+  activeDeploymentJobs.add(jobId);
+
   // Create a unique folder for the new repository
   const clonePath = generateUniqueFolderName(repoUrl);
   sendJobStatus(jobId, { message: 'Cloning repository...', level: 'info' });
 
   // Clone the repository
-  git.clone(repoUrl, clonePath)
+  Promise.resolve()
+    .then(() => git.clone(repoUrl, clonePath))
     .then(async() => {         
       
       try {
@@ -819,6 +879,7 @@ app.post('/api/clone-repo', async (req, res) => {
         level: 'link',
         url: 'http://localhost:8081',
       });
+      activeDeploymentJobs.delete(jobId);
       return res.json({
         jobId,
         status: 'succeeded',
@@ -831,6 +892,7 @@ app.post('/api/clone-repo', async (req, res) => {
         deleteRepo(clonePath);
         const message = error.message;
         sendJobStatus(jobId, { message, level: 'error' });
+        activeDeploymentJobs.delete(jobId);
         return res.status(500).json({ jobId, status: 'failed', error: message });
       
       }
@@ -838,6 +900,7 @@ app.post('/api/clone-repo', async (req, res) => {
     .catch((err) => {
       console.error('Error cloning repo:', err);
       deleteRepo(clonePath);
+      activeDeploymentJobs.delete(jobId);
       const message = err.message.includes('Repository not found')
         ? 'Repository not found. Please check the repository URL.'
         : `Error cloning repository: ${err.message}`;
@@ -846,8 +909,19 @@ app.post('/api/clone-repo', async (req, res) => {
     });
 });
 
+app.use((error, req, res, next) => {
+  if (error.type === 'entity.too.large') {
+    return res.status(413).json({
+      jobId: req.body?.jobId || null,
+      status: 'failed',
+      error: 'Request body exceeds the 8 KB limit.',
+    });
+  }
+
+  return next(error);
+});
 
 // Start the server
-server.listen(port, () => {
+server.listen(port, '127.0.0.1', () => {
   console.log(`Server running on http://localhost:${port}`);
 });
